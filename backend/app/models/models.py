@@ -8,26 +8,75 @@ class Paper(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
+    project_id = Column(
+        Integer,
+        ForeignKey("projects.id"),
+        nullable=True
+    )
 
     filename = Column(String, nullable=False)
+
     raw_text = Column(String, nullable=True)
 
-    status = Column(String, default="PROCESSING")
-    read_status = Column(String, default="UNREAD")
+    status = Column(
+        String,
+        default="PROCESSING"
+    )
 
-    review_type = Column(String, nullable=True)
+    read_status = Column(
+        String,
+        default="UNREAD"
+    )
 
-    contribution = Column(String, nullable=True)
-    methodology = Column(String, nullable=True)
-    key_results = Column(String, nullable=True)
-    limitations = Column(String, nullable=True)
+    review_type = Column(
+        String,
+        nullable=True
+    )
 
-    keywords = Column(String, nullable=True)
-    embedding = Column(String, nullable=True)
+    contribution = Column(
+        String,
+        nullable=True
+    )
 
-    text_blocks = relationship("TextBlock", back_populates="paper")
-    visual_elements = relationship("VisualElement", back_populates="paper")
+    methodology = Column(
+        String,
+        nullable=True
+    )
+
+    key_results = Column(
+        String,
+        nullable=True
+    )
+
+    limitations = Column(
+        String,
+        nullable=True
+    )
+
+    keywords = Column(
+        String,
+        nullable=True
+    )
+
+    embedding = Column(
+        String,
+        nullable=True
+    )
+
+    project = relationship(
+        "Project",
+        back_populates="papers"
+    )
+
+    text_blocks = relationship(
+        "TextBlock",
+        back_populates="paper"
+    )
+
+    visual_elements = relationship(
+        "VisualElement",
+        back_populates="paper"
+    )
 
 
 class TextBlock(Base):
@@ -35,11 +84,20 @@ class TextBlock(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    paper_id = Column(Integer, ForeignKey("papers.id"))
+    paper_id = Column(
+        Integer,
+        ForeignKey("papers.id")
+    )
 
-    text = Column(String, nullable=False)
+    text = Column(
+        String,
+        nullable=False
+    )
 
-    paper = relationship("Paper", back_populates="text_blocks")
+    paper = relationship(
+        "Paper",
+        back_populates="text_blocks"
+    )
 
 
 class VisualElement(Base):
@@ -47,9 +105,22 @@ class VisualElement(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    paper_id = Column(Integer, ForeignKey("papers.id"))
+    paper_id = Column(
+        Integer,
+        ForeignKey("papers.id")
+    )
 
-    element_type = Column(String, nullable=True)
-    content = Column(String, nullable=True)
+    element_type = Column(
+        String,
+        nullable=True
+    )
 
-    paper = relationship("Paper", back_populates="visual_elements")
+    content = Column(
+        String,
+        nullable=True
+    )
+
+    paper = relationship(
+        "Paper",
+        back_populates="visual_elements"
+    )

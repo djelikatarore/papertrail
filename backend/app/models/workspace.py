@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 
@@ -13,4 +14,17 @@ class Workspace(Base):
 
     created_at = Column(String, nullable=True)
 
-    owner_id = Column(Integer, ForeignKey("users.id"))
+    owner_id = Column(
+        Integer,
+        ForeignKey("users.id")
+    )
+
+    members = relationship(
+        "WorkspaceMember",
+        back_populates="workspace"
+    )
+
+    projects = relationship(
+        "Project",
+        back_populates="workspace"
+    )

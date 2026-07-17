@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 
@@ -26,4 +27,9 @@ class ChatMessage(Base):
     created_at = Column(
         String,
         nullable=True
+    )
+
+    chat_session = relationship(
+        "ChatSession",
+        back_populates="messages"
     )

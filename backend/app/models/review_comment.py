@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 
@@ -32,4 +33,14 @@ class ReviewComment(Base):
     created_at = Column(
         String,
         nullable=True
+    )
+
+    draft_document = relationship(
+        "DraftDocument",
+        back_populates="review_comments"
+    )
+
+    user = relationship(
+        "User",
+        back_populates="review_comments"
     )

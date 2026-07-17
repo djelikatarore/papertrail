@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 
@@ -38,12 +39,11 @@ class DraftDocument(Base):
         default="DRAFT"
     )
 
-    created_at = Column(
-        String,
-        nullable=True
+    project = relationship(
+        "Project"
     )
 
-    updated_at = Column(
-        String,
-        nullable=True
+    review_comments = relationship(
+        "ReviewComment",
+        back_populates="draft_document"
     )

@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 
@@ -28,4 +29,19 @@ class Project(Base):
     created_at = Column(
         String,
         nullable=True
+    )
+
+    workspace = relationship(
+        "Workspace",
+        back_populates="projects"
+    )
+
+    papers = relationship(
+        "Paper",
+        back_populates="project"
+    )
+
+    chat_sessions = relationship(
+        "ChatSession",
+        back_populates="project"
     )

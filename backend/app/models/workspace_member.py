@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 
@@ -28,4 +29,14 @@ class WorkspaceMember(Base):
     joined_at = Column(
         String,
         nullable=True
+    )
+
+    workspace = relationship(
+        "Workspace",
+        back_populates="members"
+    )
+
+    user = relationship(
+        "User",
+        back_populates="workspace_memberships"
     )
