@@ -16,6 +16,12 @@ class Paper(Base):
 
     filename = Column(String, nullable=False)
 
+    upload_date = Column(String, nullable=True)
+
+    page_count = Column(Integer, nullable=True)
+
+    file_size_bytes = Column(Integer, nullable=True)
+
     raw_text = Column(String, nullable=True)
 
     status = Column(

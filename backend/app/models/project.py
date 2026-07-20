@@ -12,6 +12,8 @@ class Project(Base):
 
     topic = Column(String, nullable=False)
 
+    topic_embedding = Column(String, nullable=True)
+
     description = Column(String, nullable=True)
 
     status = Column(

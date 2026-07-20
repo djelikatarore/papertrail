@@ -21,6 +21,10 @@ class User(Base):
 
     created_at = Column(String, nullable=True)
 
+    reset_token = Column(String, unique=True, nullable=True)
+
+    reset_token_expires_at = Column(String, nullable=True)
+
     workspace_memberships = relationship(
         "WorkspaceMember",
         back_populates="user"

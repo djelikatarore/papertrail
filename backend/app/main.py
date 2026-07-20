@@ -13,6 +13,8 @@ from app.models.chat_message import ChatMessage
 from app.models.draft_document import DraftDocument
 from app.models.review_comment import ReviewComment
 
+from app.routers.auth_router import router as auth_router
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -27,6 +29,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
+
 
 @app.get("/health")
 def health():

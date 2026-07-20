@@ -14,6 +14,8 @@ class Workspace(Base):
 
     created_at = Column(String, nullable=True)
 
+    invite_link_token = Column(String, unique=True, nullable=True)
+
     owner_id = Column(
         Integer,
         ForeignKey("users.id")
