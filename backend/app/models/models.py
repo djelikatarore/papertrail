@@ -14,6 +14,12 @@ class Paper(Base):
         nullable=True
     )
 
+    uploaded_by = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=True
+    )
+
     filename = Column(String, nullable=False)
 
     upload_date = Column(String, nullable=True)
@@ -23,6 +29,8 @@ class Paper(Base):
     file_size_bytes = Column(Integer, nullable=True)
 
     raw_text = Column(String, nullable=True)
+
+    error_message = Column(String, nullable=True)
 
     status = Column(
         String,

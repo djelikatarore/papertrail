@@ -31,6 +31,12 @@ class WorkspaceMember(Base):
         nullable=True
     )
 
+    upload_credits = Column(
+        Integer,
+        nullable=False,
+        default=0
+    )
+
     workspace = relationship(
         "Workspace",
         back_populates="members"

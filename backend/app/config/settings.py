@@ -14,3 +14,8 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 EMAIL_FROM = os.getenv("EMAIL_FROM", "PaperTrail <onboarding@resend.dev>")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "30"))
+
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
+MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024
+MAX_PAPERS_PER_PROJECT = 8
+VALID_REVIEW_TYPES = {"SYSTEMATIC", "SCOPING", "CRITICAL", "NARRATIVE", "RAPID"}

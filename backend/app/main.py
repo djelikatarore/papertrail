@@ -14,6 +14,9 @@ from app.models.draft_document import DraftDocument
 from app.models.review_comment import ReviewComment
 
 from app.routers.auth_router import router as auth_router
+from app.routers.paper_router import router as paper_router
+from app.routers.project_router import router as project_router
+from app.routers.workspace_router import router as workspace_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -31,6 +34,9 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(workspace_router)
+app.include_router(project_router)
+app.include_router(paper_router)
 
 
 @app.get("/health")
