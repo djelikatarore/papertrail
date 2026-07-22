@@ -1,5 +1,7 @@
 import fitz
 
+from app.services.ocr_service import OcrUnavailableError, ocr_page
+
 HEADER_FOOTER_MARGIN_RATIO = 0.07
 COLUMN_TOLERANCE_RATIO = 0.02
 SIDEBAR_MAX_WIDTH_RATIO = 0.05
@@ -71,18 +73,30 @@ def extract_text(file_path: str) -> tuple[str, int]:
     except Exception as exc:
         raise PdfExtractionError(f"Could not open PDF: {exc}") from exc
 
+    ocr_unavailable = False
+
     try:
         page_count = doc.page_count
-        page_texts = [
-            _sort_page_blocks(page.get_text("blocks"), page.rect.width, page.rect.height)
-            for page in doc
-        ]
+        page_texts = []
+        for page in doc:
+            text = _sort_page_blocks(page.get_text("blocks"), page.rect.width, page.rect.height)
+            if not text.strip() and not ocr_unavailable:
+                try:
+                    text = ocr_page(page).strip()
+                except OcrUnavailableError:
+                    ocr_unavailable = True
+                    text = ""
+            page_texts.append(text)
     finally:
         doc.close()
 
     raw_text = "\n\n".join(t for t in page_texts if t)
 
     if not raw_text.strip():
+        if ocr_unavailable:
+            raise PdfExtractionError(
+                "No extractable text found and OCR is unavailable (Tesseract is not installed on this machine)"
+            )
         raise PdfExtractionError(
             "No extractable text found (the PDF may be a scanned image without a text layer)"
         )
