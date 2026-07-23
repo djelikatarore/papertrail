@@ -67,6 +67,11 @@ class Paper(Base):
         nullable=True
     )
 
+    summary_flagged_fields = Column(
+        String,
+        nullable=True
+    )
+
     keywords = Column(
         String,
         nullable=True
@@ -108,6 +113,11 @@ class TextBlock(Base):
         nullable=False
     )
 
+    section_reference = Column(
+        String,
+        nullable=True
+    )
+
     paper = relationship(
         "Paper",
         back_populates="text_blocks"
@@ -130,6 +140,21 @@ class VisualElement(Base):
     )
 
     content = Column(
+        String,
+        nullable=True
+    )
+
+    image_path = Column(
+        String,
+        nullable=True
+    )
+
+    page_number = Column(
+        Integer,
+        nullable=True
+    )
+
+    ai_description = Column(
         String,
         nullable=True
     )

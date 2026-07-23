@@ -11,6 +11,7 @@ from app.models.user import User
 from app.services.auth_service import create_access_token, hash_password, verify_password
 from app.services.email_service import send_reset_password_email
 from app.utils.auth_dependency import get_current_user
+from app.utils.logging_utils import safe_log
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -112,7 +113,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     try:
         send_reset_password_email(user.email, reset_link)
     except Exception as exc:
-        print(f"[email_service] Failed to send reset email to {user.email}: {exc}")
+        safe_log(f"[email_service] Failed to send reset email to {user.email}: {exc}")
 
     return generic_response
 
