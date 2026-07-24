@@ -12,3 +12,6 @@ resend
 groq
 pytesseract
 pillow
+sentence-transformers
+faiss-cpu
+requests

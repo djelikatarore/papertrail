@@ -17,6 +17,7 @@ from app.routers.auth_router import router as auth_router
 from app.routers.paper_router import router as paper_router
 from app.routers.project_router import router as project_router
 from app.routers.workspace_router import router as workspace_router
+from app.services.faiss_service import load_index
 
 Base.metadata.create_all(bind=engine)
 
@@ -37,6 +38,11 @@ app.include_router(auth_router)
 app.include_router(workspace_router)
 app.include_router(project_router)
 app.include_router(paper_router)
+
+
+@app.on_event("startup")
+def startup_load_faiss_index():
+    load_index()
 
 
 @app.get("/health")

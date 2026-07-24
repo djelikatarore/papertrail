@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timezone
 
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.config.settings import (
     MAX_PAPERS_PER_PROJECT,
     MAX_UPLOAD_SIZE_BYTES,
+    OFF_TOPIC_SIMILARITY_THRESHOLD,
     UPLOAD_DIR,
     VALID_REVIEW_TYPES,
     VISUAL_ELEMENTS_DIR,
@@ -17,9 +19,12 @@ from app.models.models import Paper, TextBlock, VisualElement
 from app.models.project import Project
 from app.models.user import User
 from app.services.chunking_service import chunk_text
+from app.services.embedding_service import average_embedding, cosine_similarity, get_embedding, get_paper_embedding_source
+from app.services.faiss_service import add_paper_embedding
 from app.services.keyword_service import extract_keywords
 from app.services.llm_service import LlmError, call_vision_llm
-from app.services.pdf_service import PdfExtractionError, extract_text
+from app.services.paper_type_service import detect_paper_type
+from app.services.pdf_service import PdfExtractionError, extract_text, extract_title
 from app.services.summary_service import generate_summary
 from app.services.visual_extraction_service import extract_visual_elements
 from app.utils.auth_dependency import get_current_user
@@ -48,6 +53,7 @@ class PaperResponse(BaseModel):
     id: int
     project_id: int | None
     filename: str
+    title: str | None
     status: str
     review_type: str | None
     file_size_bytes: int | None
@@ -62,6 +68,10 @@ class PaperResponse(BaseModel):
     limitations: str | None
     summary_flagged_fields: str | None
     keywords: str | None
+    is_off_topic: bool
+    topic_similarity_score: float | None
+    detected_paper_type: str | None
+    content_warning: str | None
     visual_elements: list[VisualElementResponse] = []
 
     class Config:
@@ -177,6 +187,7 @@ async def upload_paper(
         raw_text, page_count = extract_text(file_path)
         paper.raw_text = raw_text
         paper.page_count = page_count
+        paper.title = extract_title(file_path, raw_text)
         paper.status = "READY"
         paper.error_message = None
     except PdfExtractionError as exc:
@@ -203,6 +214,33 @@ async def upload_paper(
             paper.keywords = ", ".join(keywords) if keywords else None
         except LlmError as exc:
             safe_log(f"[keyword_service] Failed to extract keywords for paper {paper.id}: {exc}")
+
+        try:
+            paper.detected_paper_type, paper.content_warning = detect_paper_type(chunks)
+        except LlmError as exc:
+            safe_log(f"[paper_type_service] Failed to detect paper type for paper {paper.id}: {exc}")
+
+        try:
+            embedding_source = get_paper_embedding_source(paper.raw_text, chunks)
+            paper_embedding = get_embedding(embedding_source)
+            paper.embedding = json.dumps(paper_embedding)
+
+            if project.topic_embedding:
+                topic_vector = json.loads(project.topic_embedding)
+                similarity = cosine_similarity(paper_embedding, topic_vector)
+                paper.topic_similarity_score = similarity
+                paper.is_off_topic = similarity < OFF_TOPIC_SIMILARITY_THRESHOLD
+
+            other_embeddings = [
+                json.loads(p.embedding)
+                for p in db.query(Paper).filter(Paper.project_id == project.id, Paper.embedding.isnot(None)).all()
+                if p.id != paper.id
+            ]
+            project.topic_embedding = json.dumps(average_embedding(other_embeddings + [paper_embedding]))
+
+            add_paper_embedding(paper.id, paper_embedding)
+        except Exception as exc:
+            safe_log(f"[embedding_service] Failed to generate embedding for paper {paper.id}: {exc}")
 
     try:
         os.makedirs(VISUAL_ELEMENTS_DIR, exist_ok=True)

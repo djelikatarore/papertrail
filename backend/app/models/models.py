@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Boolean, Column, Float, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -21,6 +21,8 @@ class Paper(Base):
     )
 
     filename = Column(String, nullable=False)
+
+    title = Column(String, nullable=True)
 
     upload_date = Column(String, nullable=True)
 
@@ -78,6 +80,27 @@ class Paper(Base):
     )
 
     embedding = Column(
+        String,
+        nullable=True
+    )
+
+    is_off_topic = Column(
+        Boolean,
+        nullable=False,
+        default=False
+    )
+
+    topic_similarity_score = Column(
+        Float,
+        nullable=True
+    )
+
+    detected_paper_type = Column(
+        String,
+        nullable=True
+    )
+
+    content_warning = Column(
         String,
         nullable=True
     )

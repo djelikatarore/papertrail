@@ -6,6 +6,9 @@ HEADER_FOOTER_MARGIN_RATIO = 0.07
 COLUMN_TOLERANCE_RATIO = 0.02
 SIDEBAR_MAX_WIDTH_RATIO = 0.05
 SIDEBAR_MIN_HEIGHT_RATIO = 0.25
+TITLE_MAX_CHARS = 300
+TITLE_MIN_CHARS = 8
+TITLE_MAX_LINES = 4
 
 
 class PdfExtractionError(Exception):
@@ -65,6 +68,55 @@ def _sort_page_blocks(blocks: list, page_width: float, page_height: float) -> st
     final_order = sorted(headers, key=lambda b: b[1]) + ordered_blocks + sorted(footers, key=lambda b: b[1])
 
     return "\n".join(b[4].strip() for b in final_order)
+
+
+def _extract_title_from_first_page(page) -> str | None:
+    """The paper's title is usually the largest-font text near the top of page 1.
+    Rotated text (arXiv sidebar watermarks) is excluded via the line direction check."""
+    top_half = page.rect.height / 2
+
+    spans = []
+    for block in page.get_text("dict")["blocks"]:
+        if block.get("type") != 0:
+            continue
+        for line in block["lines"]:
+            direction = line.get("dir", (1.0, 0.0))
+            if abs(direction[0]) < 0.9:
+                continue
+            for span in line["spans"]:
+                text = span["text"].strip()
+                if text and span["bbox"][1] < top_half:
+                    spans.append((span["size"], span["bbox"][1], text))
+
+    if not spans:
+        return None
+
+    max_size = max(s[0] for s in spans)
+    title_spans = sorted((s for s in spans if s[0] >= max_size - 0.5), key=lambda s: s[1])[:TITLE_MAX_LINES]
+    title = " ".join(text for _, _, text in title_spans)
+    title = " ".join(title.split())
+
+    return title[:TITLE_MAX_CHARS] if len(title) >= TITLE_MIN_CHARS else None
+
+
+def extract_title(file_path: str, raw_text: str) -> str:
+    try:
+        doc = fitz.open(file_path)
+        try:
+            title = _extract_title_from_first_page(doc[0])
+        finally:
+            doc.close()
+        if title:
+            return title
+    except Exception:
+        pass
+
+    for line in raw_text.splitlines():
+        line = line.strip()
+        if line:
+            return line[:TITLE_MAX_CHARS]
+
+    return "Untitled"
 
 
 def extract_text(file_path: str) -> tuple[str, int]:
