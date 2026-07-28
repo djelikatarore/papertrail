@@ -2,7 +2,7 @@ import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from app.config.settings import FRONTEND_URL
@@ -40,11 +40,6 @@ class InviteLinkResponse(BaseModel):
 
 class InviteUserRequest(BaseModel):
     email: EmailStr
-    credits: int = Field(default=0, ge=0, le=5)
-
-
-class UpdateCreditsRequest(BaseModel):
-    credits: int = Field(ge=0, le=5)
 
 
 class WorkspaceMemberResponse(BaseModel):
@@ -53,7 +48,6 @@ class WorkspaceMemberResponse(BaseModel):
     user_id: int
     role: str
     joined_at: str | None
-    upload_credits: int
 
     class Config:
         from_attributes = True
@@ -134,40 +128,8 @@ def invite_user_by_email(
         user_id=invited_user.id,
         role="MEMBER",
         joined_at=datetime.now(timezone.utc).isoformat(),
-        upload_credits=payload.credits,
     )
     db.add(membership)
-    db.commit()
-    db.refresh(membership)
-
-    return membership
-
-
-@router.patch("/{workspace_id}/members/{member_id}/credits", response_model=WorkspaceMemberResponse)
-def update_member_credits(
-    workspace_id: int,
-    member_id: int,
-    payload: UpdateCreditsRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    workspace = get_workspace_or_404(workspace_id, db)
-
-    if workspace.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the workspace owner can modify upload credits",
-        )
-
-    membership = (
-        db.query(WorkspaceMember)
-        .filter(WorkspaceMember.id == member_id, WorkspaceMember.workspace_id == workspace_id)
-        .first()
-    )
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace member not found")
-
-    membership.upload_credits = payload.credits
     db.commit()
     db.refresh(membership)
 

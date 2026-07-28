@@ -10,14 +10,17 @@ from app.config.settings import (
     MAX_PAPERS_PER_PROJECT,
     MAX_UPLOAD_SIZE_BYTES,
     OFF_TOPIC_SIMILARITY_THRESHOLD,
+    QA_OUT_OF_SCOPE_THRESHOLD,
     UPLOAD_DIR,
     VALID_REVIEW_TYPES,
     VISUAL_ELEMENTS_DIR,
 )
 from app.database import get_db
+from app.models.chat_session import ChatSession
 from app.models.models import Paper, TextBlock, VisualElement
 from app.models.project import Project
 from app.models.user import User
+from app.services.chat_service import get_history_grouped_by_date, get_or_create_paper_session, save_exchange
 from app.services.chunking_service import chunk_text
 from app.services.embedding_service import average_embedding, cosine_similarity, get_embedding, get_paper_embedding_source
 from app.services.faiss_service import add_paper_embedding
@@ -25,11 +28,12 @@ from app.services.keyword_service import extract_keywords
 from app.services.llm_service import LlmError, call_vision_llm
 from app.services.paper_type_service import detect_paper_type
 from app.services.pdf_service import PdfExtractionError, extract_text, extract_title
+from app.services.qa_service import generate_grounded_answer, retrieve_relevant_chunks
 from app.services.summary_service import generate_summary
 from app.services.visual_extraction_service import extract_visual_elements
 from app.utils.auth_dependency import get_current_user
 from app.utils.logging_utils import safe_log
-from app.utils.workspace_access import get_workspace_or_404, require_member
+from app.utils.workspace_access import get_workspace_or_404, require_member, require_project_access
 
 router = APIRouter(prefix="/papers", tags=["papers"])
 
@@ -47,6 +51,16 @@ class VisualElementResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AskQuestionRequest(BaseModel):
+    question: str
+
+
+class AskQuestionResponse(BaseModel):
+    answer: str | None
+    cited_section: str | None
+    refused: bool
 
 
 class PaperResponse(BaseModel):
@@ -118,6 +132,7 @@ async def upload_paper(
         )
         if not project:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found in this workspace")
+        require_project_access(project_id, membership, db)
     else:
         project = Project(
             workspace_id=workspace_id,
@@ -159,9 +174,6 @@ async def upload_paper(
             detail=f"This project has reached the maximum of {MAX_PAPERS_PER_PROJECT} papers",
         )
 
-    if membership.role != "OWNER" and membership.upload_credits <= 0:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No upload credits remaining")
-
     paper = Paper(
         project_id=project.id,
         uploaded_by=current_user.id,
@@ -180,9 +192,6 @@ async def upload_paper(
     with open(file_path, "wb") as f:
         f.write(content)
 
-    if membership.role != "OWNER":
-        membership.upload_credits -= 1
-
     try:
         raw_text, page_count = extract_text(file_path)
         paper.raw_text = raw_text
@@ -197,7 +206,12 @@ async def upload_paper(
     if paper.status == "READY":
         chunks = chunk_text(paper.raw_text)
         for section_reference, chunk_body in chunks:
-            db.add(TextBlock(paper_id=paper.id, text=chunk_body, section_reference=section_reference))
+            text_block = TextBlock(paper_id=paper.id, text=chunk_body, section_reference=section_reference)
+            try:
+                text_block.embedding = json.dumps(get_embedding(chunk_body))
+            except Exception as exc:
+                safe_log(f"[embedding_service] Failed to embed chunk '{section_reference}' for paper {paper.id}: {exc}")
+            db.add(text_block)
 
         try:
             summary, flagged_fields = generate_summary(chunks)
@@ -270,3 +284,90 @@ async def upload_paper(
     db.refresh(paper)
 
     return paper
+
+
+def _get_paper_with_access(paper_id: int, db: Session, current_user: User) -> Paper:
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Paper not found")
+
+    project = db.query(Project).filter(Project.id == paper.project_id).first()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Paper's project not found")
+
+    membership = require_member(project.workspace_id, current_user.id, db)
+    require_project_access(project.id, membership, db)
+    return paper
+
+
+@router.post("/{paper_id}/ask", response_model=AskQuestionResponse)
+def ask_question(
+    paper_id: int,
+    payload: AskQuestionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Sprint 6 Tasks 2-4+8: retrieves the paper's top-3 most relevant chunks for the
+    question (cosine similarity against precomputed TextBlock embeddings). If the
+    best chunk match is below QA_OUT_OF_SCOPE_THRESHOLD, the question is refused
+    without ever calling the LLM (Task 4). Otherwise the LLM answers grounded in
+    those chunks with a verifiable section citation (Task 3). Every exchange
+    (including refusals) is saved to this paper's chat history (Task 8)."""
+    paper = _get_paper_with_access(paper_id, db, current_user)
+
+    chunks = retrieve_relevant_chunks(payload.question, paper_id, db)
+    if not chunks:
+        response = AskQuestionResponse(
+            answer="This paper has no processed content to answer questions from yet.",
+            cited_section=None,
+            refused=True,
+        )
+    elif chunks[0]["score"] < QA_OUT_OF_SCOPE_THRESHOLD:
+        response = AskQuestionResponse(
+            answer="This question doesn't appear to be answerable from this paper's content.",
+            cited_section=None,
+            refused=True,
+        )
+    else:
+        try:
+            answer, cited_section, refused = generate_grounded_answer(payload.question, chunks)
+        except LlmError as exc:
+            safe_log(f"[qa_service] Failed to generate answer for paper {paper_id}: {exc}")
+            answer, cited_section, refused = "The question answering service is temporarily unavailable.", None, True
+        response = AskQuestionResponse(answer=answer, cited_section=cited_section, refused=refused)
+
+    session = get_or_create_paper_session(paper_id, paper.title or paper.filename, db)
+    save_exchange(session.id, payload.question, response.answer, db)
+
+    return response
+
+
+class ChatMessageResponse(BaseModel):
+    role: str
+    content: str
+    created_at: str | None
+
+
+class ChatHistoryDateGroup(BaseModel):
+    date: str
+    messages: list[ChatMessageResponse]
+
+
+@router.get("/{paper_id}/chat-history", response_model=list[ChatHistoryDateGroup])
+def get_paper_chat_history(
+    paper_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Sprint 6 Task 8: returns this paper's Q&A history, grouped by date."""
+    _get_paper_with_access(paper_id, db, current_user)
+
+    session = (
+        db.query(ChatSession)
+        .filter(ChatSession.paper_id == paper_id, ChatSession.project_id.is_(None))
+        .first()
+    )
+    if not session:
+        return []
+
+    return get_history_grouped_by_date(session, db)

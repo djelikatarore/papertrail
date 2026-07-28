@@ -12,8 +12,10 @@ from app.models.chat_session import ChatSession
 from app.models.chat_message import ChatMessage
 from app.models.draft_document import DraftDocument
 from app.models.review_comment import ReviewComment
+from app.models.project_access_restriction import ProjectAccessRestriction
 
 from app.routers.auth_router import router as auth_router
+from app.routers.draft_router import router as draft_router
 from app.routers.paper_router import router as paper_router
 from app.routers.project_router import router as project_router
 from app.routers.workspace_router import router as workspace_router
@@ -38,6 +40,7 @@ app.include_router(auth_router)
 app.include_router(workspace_router)
 app.include_router(project_router)
 app.include_router(paper_router)
+app.include_router(draft_router)
 
 
 @app.on_event("startup")

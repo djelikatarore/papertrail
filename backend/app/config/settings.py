@@ -26,6 +26,7 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024
 MAX_PAPERS_PER_PROJECT = 8
 VALID_REVIEW_TYPES = {"SYSTEMATIC", "SCOPING", "CRITICAL", "NARRATIVE", "RAPID"}
+VALID_DOCUMENT_TYPES = {"LITERATURE_REVIEW", "RESEARCH_PROPOSAL", "THESIS_CHAPTER", "CONFERENCE_PAPER", "OTHER"}
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
@@ -37,7 +38,13 @@ if not GROQ_API_KEY:
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
 OCR_DPI = 300
 
+CORE_API_KEY = os.getenv("CORE_API_KEY")
+if not CORE_API_KEY:
+    raise RuntimeError("CORE_API_KEY is not set in .env")
+
 VISUAL_ELEMENTS_DIR = os.getenv("VISUAL_ELEMENTS_DIR", "visual_elements")
+DRAFT_PDF_DIR = os.getenv("DRAFT_PDF_DIR", "draft_pdfs")
+DRAFT_PDF_FOOTER_TEXT = "Generated from PaperTrail draft"
 
 # Empirically determined (see conversation record): related papers within the same
 # subfield scored ~0.52-0.73 cosine similarity; unrelated domains scored ~0.02-0.08.
@@ -45,3 +52,10 @@ VISUAL_ELEMENTS_DIR = os.getenv("VISUAL_ELEMENTS_DIR", "visual_elements")
 OFF_TOPIC_SIMILARITY_THRESHOLD = float(os.getenv("OFF_TOPIC_SIMILARITY_THRESHOLD", "0.30"))
 
 FAISS_INDEX_PATH = os.getenv("FAISS_INDEX_PATH", "faiss_index.bin")
+
+# Empirically determined (Sprint 6, Task 4): question-vs-chunk cosine similarity for
+# genuinely answerable questions about the "Attention Is All You Need" test paper
+# scored 0.32-0.58; unrelated questions (including an ML-adjacent but off-paper one)
+# scored 0.01-0.23. 0.28 sits in the gap, leaning toward refusing borderline cases
+# rather than risking an ungrounded answer.
+QA_OUT_OF_SCOPE_THRESHOLD = float(os.getenv("QA_OUT_OF_SCOPE_THRESHOLD", "0.28"))

@@ -39,6 +39,21 @@ class DraftDocument(Base):
         default="DRAFT"
     )
 
+    created_at = Column(
+        String,
+        nullable=True
+    )
+
+    updated_at = Column(
+        String,
+        nullable=True
+    )
+
+    pdf_path = Column(
+        String,
+        nullable=True
+    )
+
     project = relationship(
         "Project"
     )

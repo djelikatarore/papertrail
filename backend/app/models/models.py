@@ -141,6 +141,11 @@ class TextBlock(Base):
         nullable=True
     )
 
+    embedding = Column(
+        String,
+        nullable=True
+    )
+
     paper = relationship(
         "Paper",
         back_populates="text_blocks"
