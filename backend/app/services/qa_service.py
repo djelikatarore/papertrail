@@ -63,7 +63,7 @@ def _build_qa_prompt(question: str, chunks: list[dict]) -> str:
     )
 
 
-def generate_grounded_answer(question: str, chunks: list[dict]) -> tuple[str | None, str | None, bool]:
+async def generate_grounded_answer(question: str, chunks: list[dict]) -> tuple[str | None, str | None, bool]:
     """Returns (answer, cited_section, refused). Reuses the same anti-hallucination
     citation check as summary_service: a cited section is only trusted if it's one
     of our known chunk labels or appears literally in the excerpt text sent to the
@@ -73,7 +73,7 @@ def generate_grounded_answer(question: str, chunks: list[dict]) -> tuple[str | N
     source_text_lower = "\n\n".join(c["text"] for c in chunks).lower()
 
     prompt = _build_qa_prompt(question, chunks)
-    response = call_llm(prompt, system_prompt=QA_SYSTEM_PROMPT)
+    response = await call_llm(prompt, system_prompt=QA_SYSTEM_PROMPT)
 
     match = re.search(r"ANSWER:\s*(.*)", response, re.DOTALL)
     if not match:
@@ -122,7 +122,7 @@ def _build_comparative_prompt(question: str, papers_with_chunks: list[dict]) -> 
     )
 
 
-def generate_comparative_answer(
+async def generate_comparative_answer(
     question: str, papers_with_chunks: list[dict]
 ) -> tuple[str | None, dict[int, str | None] | None, bool]:
     """Returns (answer, citations_by_paper_id, refused). Requires a verifiable
@@ -131,7 +131,7 @@ def generate_comparative_answer(
     excerpts (each paper is checked in isolation, not against the pooled text),
     the whole comparative answer is discarded and refused=True."""
     prompt = _build_comparative_prompt(question, papers_with_chunks)
-    response = call_llm(prompt, system_prompt=COMPARATIVE_QA_SYSTEM_PROMPT)
+    response = await call_llm(prompt, system_prompt=COMPARATIVE_QA_SYSTEM_PROMPT)
 
     answer_match = re.search(r"ANSWER:\s*(.*?)(?=\nCITATIONS:|\Z)", response, re.DOTALL)
     citations_match = re.search(r"CITATIONS:\s*(.*)", response, re.DOTALL)

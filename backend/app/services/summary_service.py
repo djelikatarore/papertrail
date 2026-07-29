@@ -94,13 +94,13 @@ def _verify_citation(text: str, chunk_labels: set[str], source_text_lower: str) 
     return True
 
 
-def generate_summary(chunks: list[tuple[str, str]]) -> tuple[dict[str, str | None], list[str]]:
+async def generate_summary(chunks: list[tuple[str, str]]) -> tuple[dict[str, str | None], list[str]]:
     selected_chunks = _prioritize_and_truncate(chunks)
     chunk_labels = {name.lower() for name, _ in selected_chunks}
     source_text_lower = "\n\n".join(text for _, text in selected_chunks).lower()
 
     prompt = _build_prompt(selected_chunks)
-    response = call_llm(prompt, system_prompt=SUMMARY_SYSTEM_PROMPT)
+    response = await call_llm(prompt, system_prompt=SUMMARY_SYSTEM_PROMPT)
 
     result: dict[str, str | None] = {field.lower(): None for field in SUMMARY_FIELDS}
     flagged_fields: list[str] = []

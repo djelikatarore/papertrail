@@ -105,6 +105,16 @@ class Paper(Base):
         nullable=True
     )
 
+    visual_elements_total = Column(
+        Integer,
+        nullable=True
+    )
+
+    visual_elements_processed = Column(
+        Integer,
+        nullable=True
+    )
+
     project = relationship(
         "Project",
         back_populates="papers"

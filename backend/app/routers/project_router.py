@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from itertools import zip_longest
+from math import ceil
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -17,6 +18,7 @@ from app.models.project import Project
 from app.models.project_access_restriction import ProjectAccessRestriction
 from app.models.user import User
 from app.models.workspace_member import WorkspaceMember
+from app.routers.paper_router import PaperResponse
 from app.services.arxiv_service import ArxivSearchError, search_arxiv
 from app.services.chat_service import get_history_grouped_by_date, get_or_create_project_session, save_exchange
 from app.services.core_service import CoreSearchError, search_core
@@ -57,6 +59,22 @@ class ProjectResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PaginatedProjectsResponse(BaseModel):
+    items: list[ProjectResponse]
+    total: int
+    page: int
+    limit: int
+    total_pages: int
+
+
+class PaginatedPapersResponse(BaseModel):
+    items: list[PaperResponse]
+    total: int
+    page: int
+    limit: int
+    total_pages: int
 
 
 class SimilarPaperResponse(BaseModel):
@@ -195,26 +213,34 @@ def create_project(
     return project
 
 
-@router.get("", response_model=list[ProjectResponse])
+@router.get("", response_model=PaginatedProjectsResponse)
 def list_projects(
     workspace_id: int,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     get_workspace_or_404(workspace_id, db)
     membership = require_member(workspace_id, current_user.id, db)
 
-    projects = db.query(Project).filter(Project.workspace_id == workspace_id).all()
-    if membership.role == "OWNER":
-        return projects
+    query = db.query(Project).filter(Project.workspace_id == workspace_id)
+    if membership.role != "OWNER":
+        restricted_ids = {
+            r.project_id
+            for r in db.query(ProjectAccessRestriction)
+            .filter(ProjectAccessRestriction.workspace_member_id == membership.id)
+            .all()
+        }
+        if restricted_ids:
+            query = query.filter(~Project.id.in_(restricted_ids))
 
-    restricted_ids = {
-        r.project_id
-        for r in db.query(ProjectAccessRestriction)
-        .filter(ProjectAccessRestriction.workspace_member_id == membership.id)
-        .all()
-    }
-    return [p for p in projects if p.id not in restricted_ids]
+    total = query.count()
+    items = query.order_by(Project.id).offset((page - 1) * limit).limit(limit).all()
+
+    return PaginatedProjectsResponse(
+        items=items, total=total, page=page, limit=limit, total_pages=ceil(total / limit) if total else 0,
+    )
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -230,6 +256,35 @@ def get_project(
     require_project_access(project_id, membership, db)
 
     return project
+
+
+@router.get("/{project_id}/papers", response_model=PaginatedPapersResponse)
+def list_project_papers(
+    workspace_id: int,
+    project_id: int,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The Paper Library listing for a project — there was previously no way to
+    list a project's papers at all (only individual actions like upload/ask/
+    download existed). Reuses the full PaperResponse shape (same as the upload
+    endpoint) since there's also no dedicated single-paper GET endpoint yet —
+    this is currently the only way to retrieve a paper's summary/keywords/status
+    after upload without re-uploading it."""
+    get_workspace_or_404(workspace_id, db)
+    membership = require_member(workspace_id, current_user.id, db)
+    _get_project_or_404(workspace_id, project_id, db)
+    require_project_access(project_id, membership, db)
+
+    query = db.query(Paper).filter(Paper.project_id == project_id)
+    total = query.count()
+    items = query.order_by(Paper.id).offset((page - 1) * limit).limit(limit).all()
+
+    return PaginatedPapersResponse(
+        items=items, total=total, page=page, limit=limit, total_pages=ceil(total / limit) if total else 0,
+    )
 
 
 @router.get("/{project_id}/similarity", response_model=list[PaperSimilarityResponse])
@@ -414,7 +469,7 @@ def get_citation_graph(
 
 
 @router.post("/{project_id}/ask-comparative", response_model=ComparativeAnswerResponse)
-def ask_comparative(
+async def ask_comparative(
     workspace_id: int,
     project_id: int,
     payload: ComparativeAskRequest,
@@ -440,6 +495,13 @@ def ask_comparative(
             detail=f"Paper(s) not found in this project: {sorted(missing_ids)}",
         )
 
+    not_ready = {p.id: p.status for p in papers if p.status != "READY"}
+    if not_ready:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Paper(s) not ready for questions yet: {not_ready}",
+        )
+
     chunks_by_paper = retrieve_relevant_chunks_multi(payload.question, payload.paper_ids, db)
     papers_with_chunks = [
         {"paper_id": paper.id, "title": paper.title or paper.filename, "chunks": chunks_by_paper[paper.id]}
@@ -447,7 +509,7 @@ def ask_comparative(
     ]
 
     try:
-        answer, citations_by_paper, refused = generate_comparative_answer(payload.question, papers_with_chunks)
+        answer, citations_by_paper, refused = await generate_comparative_answer(payload.question, papers_with_chunks)
     except LlmError as exc:
         safe_log(f"[qa_service] Failed to generate comparative answer for project {project_id}: {exc}")
         answer, citations_by_paper, refused = "The question answering service is temporarily unavailable.", {}, True

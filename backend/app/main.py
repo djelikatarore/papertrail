@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.database import Base, engine
 
@@ -20,6 +21,7 @@ from app.routers.paper_router import router as paper_router
 from app.routers.project_router import router as project_router
 from app.routers.workspace_router import router as workspace_router
 from app.services.faiss_service import load_index
+from app.utils.logging_utils import safe_log
 
 Base.metadata.create_all(bind=engine)
 
@@ -46,6 +48,17 @@ app.include_router(draft_router)
 @app.on_event("startup")
 def startup_load_faiss_index():
     load_index()
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Without this, any bug that isn't already caught as an HTTPException falls
+    through to Starlette's default handler, which returns a plain-text (not
+    JSON) 500 body — inconsistent with every other error response in this API,
+    which is always {"detail": "..."}. This keeps that shape uniform even for
+    genuinely unexpected failures, while still logging the real exception."""
+    safe_log(f"[main] Unhandled exception on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(status_code=500, content={"detail": "An unexpected error occurred. Please try again."})
 
 
 @app.get("/health")

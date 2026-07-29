@@ -42,14 +42,14 @@ def _build_prompt(selected_chunks: list[tuple[str, str]]) -> str:
     )
 
 
-def detect_paper_type(chunks: list[tuple[str, str]]) -> tuple[str, str | None]:
+async def detect_paper_type(chunks: list[tuple[str, str]]) -> tuple[str, str | None]:
     """Classifies the document in a single LLM call. Returns (detected_paper_type,
     content_warning) — content_warning is None for genuine academic papers, and a
     user-facing caution message when the document doesn't appear to be one at all
     (the upload itself is never rejected, this is advisory only)."""
     selected_chunks = _prioritize_and_truncate(chunks)
     prompt = _build_prompt(selected_chunks)
-    response = call_llm(prompt, system_prompt=PAPER_TYPE_SYSTEM_PROMPT)
+    response = await call_llm(prompt, system_prompt=PAPER_TYPE_SYSTEM_PROMPT)
 
     match = re.search(r"PAPER_TYPE:\s*(.+)", response)
     detected_type = match.group(1).strip() if match else NOT_ACADEMIC_LABEL

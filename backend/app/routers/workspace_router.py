@@ -1,17 +1,21 @@
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.config.settings import FRONTEND_URL
+from app.config.settings import FRONTEND_URL, VALID_REVIEW_TYPES
 from app.database import get_db
+from app.models.models import Paper
+from app.models.project import Project
+from app.models.project_access_restriction import ProjectAccessRestriction
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.models.workspace_member import WorkspaceMember
 from app.utils.auth_dependency import get_current_user
-from app.utils.workspace_access import get_workspace_or_404
+from app.utils.workspace_access import get_workspace_or_404, require_member
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -51,6 +55,34 @@ class WorkspaceMemberResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PaperSearchResultResponse(BaseModel):
+    id: int
+    project_id: int | None
+    filename: str
+    title: str | None
+    keywords: str | None
+    review_type: str | None
+    read_status: str
+    detected_paper_type: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectSearchResultResponse(BaseModel):
+    id: int
+    title: str
+    topic: str
+
+    class Config:
+        from_attributes = True
+
+
+class SearchResponse(BaseModel):
+    papers: list[PaperSearchResultResponse]
+    projects: list[ProjectSearchResultResponse]
 
 
 @router.post("", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)
@@ -158,6 +190,74 @@ def get_invite_link(
         invite_token=workspace.invite_link_token,
         invite_link=f"{FRONTEND_URL}/workspaces/join/{workspace.invite_link_token}",
     )
+
+
+@router.get("/{workspace_id}/search", response_model=SearchResponse)
+def search_workspace(
+    workspace_id: int,
+    q: str = Query(min_length=1, description="Keyword to search for"),
+    review_type: str | None = Query(default=None, description="Filter papers by review type"),
+    read_status: str | None = Query(default=None, description="Filter papers by read status"),
+    detected_paper_type: str | None = Query(default=None, description="Filter papers by detected paper type"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Keyword search across this workspace's projects (title/topic) and papers
+    (title/keywords). Papers and projects are returned as two separate lists
+    rather than merged — they lead to different views client-side and there's no
+    shared relevance score to rank them together by. Scoped to projects the
+    current member has access to (restricted projects, and their papers, are
+    excluded — same rule as project listing).
+
+    review_type/read_status/detected_paper_type narrow the papers list only —
+    projects have no equivalent fields, so the projects list is unaffected and
+    still returned based on `q` alone."""
+    get_workspace_or_404(workspace_id, db)
+    membership = require_member(workspace_id, current_user.id, db)
+
+    if review_type is not None and review_type not in VALID_REVIEW_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"review_type must be one of: {', '.join(sorted(VALID_REVIEW_TYPES))}",
+        )
+
+    accessible_project_ids = [
+        pid for (pid,) in db.query(Project.id).filter(Project.workspace_id == workspace_id).all()
+    ]
+    if membership.role != "OWNER":
+        restricted_ids = {
+            r.project_id
+            for r in db.query(ProjectAccessRestriction)
+            .filter(ProjectAccessRestriction.workspace_member_id == membership.id)
+            .all()
+        }
+        accessible_project_ids = [pid for pid in accessible_project_ids if pid not in restricted_ids]
+
+    pattern = f"%{q.strip().lower()}%"
+
+    projects = (
+        db.query(Project)
+        .filter(
+            Project.id.in_(accessible_project_ids),
+            or_(func.lower(Project.title).like(pattern), func.lower(Project.topic).like(pattern)),
+        )
+        .all()
+    )
+
+    paper_filters = [
+        Paper.project_id.in_(accessible_project_ids),
+        or_(func.lower(Paper.title).like(pattern), func.lower(Paper.keywords).like(pattern)),
+    ]
+    if review_type is not None:
+        paper_filters.append(Paper.review_type == review_type)
+    if read_status is not None:
+        paper_filters.append(func.lower(Paper.read_status) == read_status.strip().lower())
+    if detected_paper_type is not None:
+        paper_filters.append(func.lower(Paper.detected_paper_type) == detected_paper_type.strip().lower())
+
+    papers = db.query(Paper).filter(*paper_filters).all()
+
+    return SearchResponse(papers=papers, projects=projects)
 
 
 @router.post("/join/{token}", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)

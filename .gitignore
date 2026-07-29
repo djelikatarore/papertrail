@@ -6,6 +6,11 @@ __pycache__/
 
 # Uploaded files
 backend/uploads/
+backend/visual_elements/
+backend/draft_pdfs/
+
+# FAISS index (regenerated from DB embeddings, not source data)
+backend/faiss_index.bin
 
 # Environment variables
 .env

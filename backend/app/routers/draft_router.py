@@ -378,7 +378,7 @@ def delete_review_comment(
 
 
 @router.post("/generate", response_model=GenerateDraftResponse)
-def generate_draft(
+async def generate_draft(
     workspace_id: int,
     project_id: int,
     payload: GenerateDraftRequest,
@@ -407,6 +407,13 @@ def generate_draft(
             detail=f"Paper(s) not found in this project: {sorted(missing_ids)}",
         )
 
+    not_ready = {p.id: p.status for p in papers if p.status != "READY"}
+    if not_ready:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Paper(s) not ready for draft generation yet: {not_ready}",
+        )
+
     papers_for_prompt = [
         {
             "title": paper.title or paper.filename,
@@ -420,7 +427,7 @@ def generate_draft(
     ]
 
     try:
-        content, generated, error = generate_draft_content(payload.document_type, papers_for_prompt)
+        content, generated, error = await generate_draft_content(payload.document_type, papers_for_prompt)
     except LlmError as exc:
         safe_log(f"[draft_generation_service] Failed to generate draft for project {project_id}: {exc}")
         return GenerateDraftResponse(draft=None, generated=False, error="The draft generation service is temporarily unavailable.")
@@ -501,7 +508,7 @@ async def submit_draft_feedback(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This draft has no content to review")
 
     try:
-        suggestions, discarded_count = generate_review_suggestions(draft.content, feedback_text)
+        suggestions, discarded_count = await generate_review_suggestions(draft.content, feedback_text)
     except LlmError as exc:
         safe_log(f"[feedback_service] Failed to generate review suggestions for draft {draft_id}: {exc}")
         raise HTTPException(

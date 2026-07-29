@@ -17,10 +17,10 @@ def _build_prompt(selected_chunks: list[tuple[str, str]]) -> str:
     )
 
 
-def extract_keywords(chunks: list[tuple[str, str]]) -> list[str]:
+async def extract_keywords(chunks: list[tuple[str, str]]) -> list[str]:
     selected_chunks = _prioritize_and_truncate(chunks)
     prompt = _build_prompt(selected_chunks)
-    response = call_llm(prompt, system_prompt=KEYWORD_SYSTEM_PROMPT)
+    response = await call_llm(prompt, system_prompt=KEYWORD_SYSTEM_PROMPT)
 
     keywords = [kw.strip() for kw in response.split(",")]
     return [kw for kw in keywords if kw]

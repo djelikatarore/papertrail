@@ -75,14 +75,14 @@ def _citation_matches_known_paper(cited_title: str, known_titles: list[str]) -> 
     return False
 
 
-def generate_draft_content(document_type: str, papers: list[dict]) -> tuple[str | None, bool, str | None]:
+async def generate_draft_content(document_type: str, papers: list[dict]) -> tuple[str | None, bool, str | None]:
     """Returns (content, success, error). Requires at least one citation overall
     (evidence the draft actually engaged with the source papers) and every citation
     found must match one of the given papers' titles — an unrecognized citation
     means the model referenced a paper it wasn't given, so the whole draft is
     discarded rather than shown with an unverifiable claim in it."""
     prompt = _build_draft_prompt(document_type, papers)
-    content = call_llm(prompt, system_prompt=DRAFT_SYSTEM_PROMPT)
+    content = await call_llm(prompt, system_prompt=DRAFT_SYSTEM_PROMPT)
 
     known_titles = [p["title"] for p in papers]
     citations = _extract_citations(content)

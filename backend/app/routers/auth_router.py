@@ -56,6 +56,10 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class UpdateProfileRequest(BaseModel):
+    full_name: str
+
+
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if not payload.full_name.strip():
@@ -89,6 +93,21 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @router.get("/me", response_model=UserResponse)
 def read_current_user(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+@router.put("/me", response_model=UserResponse)
+def update_current_user(
+    payload: UpdateProfileRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not payload.full_name.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Full name cannot be empty")
+
+    current_user.full_name = payload.full_name.strip()
+    db.commit()
+    db.refresh(current_user)
     return current_user
 
 

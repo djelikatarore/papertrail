@@ -1,8 +1,10 @@
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -15,7 +17,7 @@ from app.config.settings import (
     VALID_REVIEW_TYPES,
     VISUAL_ELEMENTS_DIR,
 )
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.models.chat_session import ChatSession
 from app.models.models import Paper, TextBlock, VisualElement
 from app.models.project import Project
@@ -36,6 +38,8 @@ from app.utils.logging_utils import safe_log
 from app.utils.workspace_access import get_workspace_or_404, require_member, require_project_access
 
 router = APIRouter(prefix="/papers", tags=["papers"])
+
+VISION_CONCURRENCY_LIMIT = 3
 
 VISUAL_DESCRIPTION_PROMPT = (
     "Describe this figure from an academic paper in 1-2 concise sentences. "
@@ -86,6 +90,8 @@ class PaperResponse(BaseModel):
     topic_similarity_score: float | None
     detected_paper_type: str | None
     content_warning: str | None
+    visual_elements_total: int | None
+    visual_elements_processed: int | None
     visual_elements: list[VisualElementResponse] = []
 
     class Config:
@@ -94,6 +100,7 @@ class PaperResponse(BaseModel):
 
 @router.post("/upload", response_model=PaperResponse, status_code=status.HTTP_201_CREATED)
 async def upload_paper(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     workspace_id: int = Form(...),
     project_id: int | None = Form(None),
@@ -103,6 +110,11 @@ async def upload_paper(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Returns as soon as the file is validated and saved to disk (status=PROCESSING)
+    — text extraction, chunking, summary/keywords/paper-type, embeddings, and visual
+    element description all run afterward in a background task (see
+    _process_paper_background), so the client doesn't wait for the full AI pipeline.
+    Poll GET /papers/{id} to see status progress to READY (or ERROR)."""
     if review_type not in VALID_REVIEW_TYPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -192,98 +204,176 @@ async def upload_paper(
     with open(file_path, "wb") as f:
         f.write(content)
 
-    try:
-        raw_text, page_count = extract_text(file_path)
-        paper.raw_text = raw_text
-        paper.page_count = page_count
-        paper.title = extract_title(file_path, raw_text)
-        paper.status = "READY"
-        paper.error_message = None
-    except PdfExtractionError as exc:
-        paper.status = "ERROR"
-        paper.error_message = str(exc)
-
-    if paper.status == "READY":
-        chunks = chunk_text(paper.raw_text)
-        for section_reference, chunk_body in chunks:
-            text_block = TextBlock(paper_id=paper.id, text=chunk_body, section_reference=section_reference)
-            try:
-                text_block.embedding = json.dumps(get_embedding(chunk_body))
-            except Exception as exc:
-                safe_log(f"[embedding_service] Failed to embed chunk '{section_reference}' for paper {paper.id}: {exc}")
-            db.add(text_block)
-
-        try:
-            summary, flagged_fields = generate_summary(chunks)
-            paper.contribution = summary["contribution"]
-            paper.methodology = summary["methodology"]
-            paper.key_results = summary["key_results"]
-            paper.limitations = summary["limitations"]
-            paper.summary_flagged_fields = ", ".join(flagged_fields) if flagged_fields else None
-        except LlmError as exc:
-            safe_log(f"[summary_service] Failed to generate summary for paper {paper.id}: {exc}")
-
-        try:
-            keywords = extract_keywords(chunks)
-            paper.keywords = ", ".join(keywords) if keywords else None
-        except LlmError as exc:
-            safe_log(f"[keyword_service] Failed to extract keywords for paper {paper.id}: {exc}")
-
-        try:
-            paper.detected_paper_type, paper.content_warning = detect_paper_type(chunks)
-        except LlmError as exc:
-            safe_log(f"[paper_type_service] Failed to detect paper type for paper {paper.id}: {exc}")
-
-        try:
-            embedding_source = get_paper_embedding_source(paper.raw_text, chunks)
-            paper_embedding = get_embedding(embedding_source)
-            paper.embedding = json.dumps(paper_embedding)
-
-            if project.topic_embedding:
-                topic_vector = json.loads(project.topic_embedding)
-                similarity = cosine_similarity(paper_embedding, topic_vector)
-                paper.topic_similarity_score = similarity
-                paper.is_off_topic = similarity < OFF_TOPIC_SIMILARITY_THRESHOLD
-
-            other_embeddings = [
-                json.loads(p.embedding)
-                for p in db.query(Paper).filter(Paper.project_id == project.id, Paper.embedding.isnot(None)).all()
-                if p.id != paper.id
-            ]
-            project.topic_embedding = json.dumps(average_embedding(other_embeddings + [paper_embedding]))
-
-            add_paper_embedding(paper.id, paper_embedding)
-        except Exception as exc:
-            safe_log(f"[embedding_service] Failed to generate embedding for paper {paper.id}: {exc}")
-
-    try:
-        os.makedirs(VISUAL_ELEMENTS_DIR, exist_ok=True)
-        for index, (page_number, image_bytes, ext) in enumerate(extract_visual_elements(file_path)):
-            image_filename = f"{paper.id}_{page_number}_{index}.{ext}"
-            image_disk_path = os.path.join(VISUAL_ELEMENTS_DIR, image_filename)
-            with open(image_disk_path, "wb") as f:
-                f.write(image_bytes)
-
-            visual_element = VisualElement(
-                paper_id=paper.id,
-                element_type="image",
-                image_path=image_disk_path,
-                page_number=page_number,
-            )
-
-            try:
-                visual_element.ai_description = call_vision_llm(VISUAL_DESCRIPTION_PROMPT, image_disk_path)
-            except LlmError as exc:
-                safe_log(f"[llm_service] Failed to describe image {image_disk_path}: {exc}")
-
-            db.add(visual_element)
-    except Exception as exc:
-        safe_log(f"[visual_extraction_service] Failed to extract visual elements for paper {paper.id}: {exc}")
-
-    db.commit()
-    db.refresh(paper)
+    background_tasks.add_task(_process_paper_background, paper.id, file_path, project.id)
 
     return paper
+
+
+async def _process_paper_background(paper_id: int, file_path: str, project_id: int) -> None:
+    """Runs after the upload response has already been sent to the client (FastAPI
+    BackgroundTasks execute post-response). Opens its own DB session — the
+    request-scoped one injected via Depends(get_db) is already closed by the time
+    this runs. Guarantees the paper never stays stuck on PROCESSING: any exception
+    that escapes the per-step guards below is caught by the outer try/except,
+    which marks the paper ERROR with a clear message rather than leaving it
+    silently unfinished."""
+    db = SessionLocal()
+    try:
+        paper = db.query(Paper).filter(Paper.id == paper_id).first()
+        if not paper:
+            safe_log(f"[paper_router] Background processing: paper {paper_id} no longer exists, skipping")
+            return
+        project = db.query(Project).filter(Project.id == project_id).first()
+
+        try:
+            raw_text, page_count = extract_text(file_path)
+            paper.raw_text = raw_text
+            paper.page_count = page_count
+            paper.title = extract_title(file_path, raw_text)
+            paper.status = "READY"
+            paper.error_message = None
+        except PdfExtractionError as exc:
+            paper.status = "ERROR"
+            paper.error_message = str(exc)
+
+        if paper.status == "READY":
+            chunks = chunk_text(paper.raw_text)
+            for section_reference, chunk_body in chunks:
+                text_block = TextBlock(paper_id=paper.id, text=chunk_body, section_reference=section_reference)
+                try:
+                    text_block.embedding = json.dumps(get_embedding(chunk_body))
+                except Exception as exc:
+                    safe_log(f"[embedding_service] Failed to embed chunk '{section_reference}' for paper {paper.id}: {exc}")
+                db.add(text_block)
+
+            # Summary, keywords, and paper-type detection are three independent LLM
+            # calls over the same chunks — none depends on another's output, so
+            # running them concurrently instead of one-after-another cuts this
+            # part of the pipeline down to the slowest single call instead of the
+            # sum of all three. return_exceptions=True keeps each call's failure
+            # isolated (matches the original per-call try/except behavior) rather
+            # than one failure cancelling the other two in-flight calls.
+            summary_result, keywords_result, paper_type_result = await asyncio.gather(
+                generate_summary(chunks),
+                extract_keywords(chunks),
+                detect_paper_type(chunks),
+                return_exceptions=True,
+            )
+
+            if isinstance(summary_result, LlmError):
+                safe_log(f"[summary_service] Failed to generate summary for paper {paper.id}: {summary_result}")
+            elif isinstance(summary_result, BaseException):
+                raise summary_result
+            else:
+                summary, flagged_fields = summary_result
+                paper.contribution = summary["contribution"]
+                paper.methodology = summary["methodology"]
+                paper.key_results = summary["key_results"]
+                paper.limitations = summary["limitations"]
+                paper.summary_flagged_fields = ", ".join(flagged_fields) if flagged_fields else None
+
+            if isinstance(keywords_result, LlmError):
+                safe_log(f"[keyword_service] Failed to extract keywords for paper {paper.id}: {keywords_result}")
+            elif isinstance(keywords_result, BaseException):
+                raise keywords_result
+            else:
+                paper.keywords = ", ".join(keywords_result) if keywords_result else None
+
+            if isinstance(paper_type_result, LlmError):
+                safe_log(f"[paper_type_service] Failed to detect paper type for paper {paper.id}: {paper_type_result}")
+            elif isinstance(paper_type_result, BaseException):
+                raise paper_type_result
+            else:
+                paper.detected_paper_type, paper.content_warning = paper_type_result
+
+            try:
+                embedding_source = get_paper_embedding_source(paper.raw_text, chunks)
+                paper_embedding = get_embedding(embedding_source)
+                paper.embedding = json.dumps(paper_embedding)
+
+                if project and project.topic_embedding:
+                    topic_vector = json.loads(project.topic_embedding)
+                    similarity = cosine_similarity(paper_embedding, topic_vector)
+                    paper.topic_similarity_score = similarity
+                    paper.is_off_topic = similarity < OFF_TOPIC_SIMILARITY_THRESHOLD
+
+                if project:
+                    other_embeddings = [
+                        json.loads(p.embedding)
+                        for p in db.query(Paper).filter(Paper.project_id == project.id, Paper.embedding.isnot(None)).all()
+                        if p.id != paper.id
+                    ]
+                    project.topic_embedding = json.dumps(average_embedding(other_embeddings + [paper_embedding]))
+
+                add_paper_embedding(paper.id, paper_embedding)
+            except Exception as exc:
+                safe_log(f"[embedding_service] Failed to generate embedding for paper {paper.id}: {exc}")
+
+        try:
+            os.makedirs(VISUAL_ELEMENTS_DIR, exist_ok=True)
+            visual_elements = []
+            for index, (page_number, image_bytes, ext) in enumerate(extract_visual_elements(file_path)):
+                image_filename = f"{paper.id}_{page_number}_{index}.{ext}"
+                image_disk_path = os.path.join(VISUAL_ELEMENTS_DIR, image_filename)
+                with open(image_disk_path, "wb") as f:
+                    f.write(image_bytes)
+
+                visual_elements.append(
+                    VisualElement(
+                        paper_id=paper.id,
+                        element_type="image",
+                        image_path=image_disk_path,
+                        page_number=page_number,
+                    )
+                )
+
+            if visual_elements:
+                for ve in visual_elements:
+                    db.add(ve)
+                paper.visual_elements_total = len(visual_elements)
+                paper.visual_elements_processed = 0
+                db.commit()
+
+                # One vision call per figure, all independent — but bounded to
+                # VISION_CONCURRENCY_LIMIT at a time rather than all at once.
+                # Firing every figure simultaneously (confirmed with a real
+                # 83-figure paper) blows through Groq's per-minute token budget
+                # for the vision model in one burst, so most calls fail instead
+                # of just queuing — a small concurrency cap gets most of the
+                # parallelization benefit for typical papers (a handful of
+                # figures) while staying under the rate limit for image-heavy
+                # ones. call_vision_llm's own rate-limit-aware retry (see
+                # llm_service.py) handles the rest: no image is given up on,
+                # it just may take a while for a very image-heavy paper.
+                semaphore = asyncio.Semaphore(VISION_CONCURRENCY_LIMIT)
+
+                async def _describe_and_track(ve: VisualElement) -> None:
+                    async with semaphore:
+                        try:
+                            ve.ai_description = await call_vision_llm(VISUAL_DESCRIPTION_PROMPT, ve.image_path)
+                        except LlmError as exc:
+                            safe_log(f"[llm_service] Failed to describe image {ve.image_path}: {exc}")
+                        paper.visual_elements_processed = (paper.visual_elements_processed or 0) + 1
+                        db.commit()
+
+                await asyncio.gather(*(_describe_and_track(ve) for ve in visual_elements))
+        except Exception as exc:
+            safe_log(f"[visual_extraction_service] Failed to extract visual elements for paper {paper.id}: {exc}")
+
+        db.commit()
+    except Exception as exc:
+        safe_log(f"[paper_router] Background processing crashed unexpectedly for paper {paper_id}: {exc}")
+        db.rollback()
+        try:
+            paper = db.query(Paper).filter(Paper.id == paper_id).first()
+            if paper:
+                paper.status = "ERROR"
+                paper.error_message = f"Processing failed unexpectedly: {exc}"
+                db.commit()
+        except Exception as inner_exc:
+            safe_log(f"[paper_router] Failed to mark paper {paper_id} as ERROR after crash: {inner_exc}")
+    finally:
+        db.close()
 
 
 def _get_paper_with_access(paper_id: int, db: Session, current_user: User) -> Paper:
@@ -300,8 +390,41 @@ def _get_paper_with_access(paper_id: int, db: Session, current_user: User) -> Pa
     return paper
 
 
+@router.get("/{paper_id}", response_model=PaperResponse)
+def get_paper(
+    paper_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Single-paper detail view — same access control as every other paper
+    endpoint (ask, download, chat-history)."""
+    return _get_paper_with_access(paper_id, db, current_user)
+
+
+@router.get("/{paper_id}/download")
+def download_paper(
+    paper_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Returns the original uploaded PDF as an attachment. The file is stored on
+    disk regardless of processing outcome (it's written before text extraction is
+    attempted), so this works even for papers stuck in ERROR status."""
+    paper = _get_paper_with_access(paper_id, db, current_user)
+
+    file_path = os.path.join(UPLOAD_DIR, f"{paper_id}.pdf")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Original PDF file not found on disk")
+
+    return FileResponse(
+        file_path,
+        media_type="application/pdf",
+        filename=paper.filename or f"{paper_id}.pdf",
+    )
+
+
 @router.post("/{paper_id}/ask", response_model=AskQuestionResponse)
-def ask_question(
+async def ask_question(
     paper_id: int,
     payload: AskQuestionRequest,
     db: Session = Depends(get_db),
@@ -314,6 +437,26 @@ def ask_question(
     those chunks with a verifiable section citation (Task 3). Every exchange
     (including refusals) is saved to this paper's chat history (Task 8)."""
     paper = _get_paper_with_access(paper_id, db, current_user)
+
+    if paper.status == "PROCESSING":
+        response = AskQuestionResponse(
+            answer="This paper is still being processed. Please try again in a moment.",
+            cited_section=None,
+            refused=True,
+        )
+        session = get_or_create_paper_session(paper_id, paper.title or paper.filename, db)
+        save_exchange(session.id, payload.question, response.answer, db)
+        return response
+
+    if paper.status == "ERROR":
+        response = AskQuestionResponse(
+            answer=f"This paper failed to process and has no content to answer questions from ({paper.error_message or 'unknown error'}).",
+            cited_section=None,
+            refused=True,
+        )
+        session = get_or_create_paper_session(paper_id, paper.title or paper.filename, db)
+        save_exchange(session.id, payload.question, response.answer, db)
+        return response
 
     chunks = retrieve_relevant_chunks(payload.question, paper_id, db)
     if not chunks:
@@ -330,7 +473,7 @@ def ask_question(
         )
     else:
         try:
-            answer, cited_section, refused = generate_grounded_answer(payload.question, chunks)
+            answer, cited_section, refused = await generate_grounded_answer(payload.question, chunks)
         except LlmError as exc:
             safe_log(f"[qa_service] Failed to generate answer for paper {paper_id}: {exc}")
             answer, cited_section, refused = "The question answering service is temporarily unavailable.", None, True

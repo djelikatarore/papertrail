@@ -53,7 +53,7 @@ def _partial_ratio(snippet: str, feedback_text: str) -> float:
     return best_ratio
 
 
-def generate_review_suggestions(draft_content: str, feedback_text: str) -> tuple[list[str], int]:
+async def generate_review_suggestions(draft_content: str, feedback_text: str) -> tuple[list[str], int]:
     """Returns (verified_suggestions, discarded_count). Each suggestion the LLM
     proposes must quote a snippet of the actual feedback text as justification;
     a suggestion whose quoted snippet doesn't fuzzy-match (>= FEEDBACK_MATCH_THRESHOLD
@@ -62,7 +62,7 @@ def generate_review_suggestions(draft_content: str, feedback_text: str) -> tuple
     of the app (verify the citation against the real source text), but tolerant of
     the LLM paraphrasing its citation instead of quoting verbatim."""
     prompt = _build_feedback_prompt(draft_content, feedback_text)
-    response = call_llm(prompt, system_prompt=FEEDBACK_SYSTEM_PROMPT)
+    response = await call_llm(prompt, system_prompt=FEEDBACK_SYSTEM_PROMPT)
 
     normalized_feedback = _normalize(feedback_text)
     matches = re.findall(r"SUGGESTION:\s*(.*?)\s*\(Feedback:\s*([^)]+)\)", response)
