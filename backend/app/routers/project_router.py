@@ -80,12 +80,14 @@ class PaginatedPapersResponse(BaseModel):
 class SimilarPaperResponse(BaseModel):
     paper_id: int
     filename: str
+    title: str | None
     similarity: float
 
 
 class PaperSimilarityResponse(BaseModel):
     paper_id: int
     filename: str
+    title: str | None
     similar_papers: list[SimilarPaperResponse]
 
 
@@ -313,13 +315,18 @@ def get_project_similarity(
             SimilarPaperResponse(
                 paper_id=other.id,
                 filename=other.filename,
+                title=other.title,
                 similarity=cosine_similarity(embeddings[paper.id], embeddings[other.id]),
             )
             for other in papers
             if other.id != paper.id
         ]
         similarities.sort(key=lambda s: s.similarity, reverse=True)
-        results.append(PaperSimilarityResponse(paper_id=paper.id, filename=paper.filename, similar_papers=similarities))
+        results.append(
+            PaperSimilarityResponse(
+                paper_id=paper.id, filename=paper.filename, title=paper.title, similar_papers=similarities
+            )
+        )
 
     return results
 
@@ -564,6 +571,28 @@ def get_project_chat_history(
         return []
 
     return get_history_grouped_by_date(session, db)
+
+
+@router.get("/{project_id}/access", response_model=ProjectAccessResponse)
+def get_project_access(
+    workspace_id: int,
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Read-only counterpart to the PATCH below — needed so a client can render
+    current per-member toggle state without having to mutate it first (the
+    PATCH always requires exactly one of allowed_member_ids/revoke_member_id,
+    so it can't double as a way to just read the current state)."""
+    get_workspace_or_404(workspace_id, db)
+    require_member(workspace_id, current_user.id, db)
+    _get_project_or_404(workspace_id, project_id, db)
+
+    restricted_member_ids = [
+        r.workspace_member_id
+        for r in db.query(ProjectAccessRestriction).filter(ProjectAccessRestriction.project_id == project_id).all()
+    ]
+    return ProjectAccessResponse(project_id=project_id, restricted_member_ids=restricted_member_ids)
 
 
 @router.patch("/{project_id}/access", response_model=ProjectAccessResponse)

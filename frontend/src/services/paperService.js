@@ -13,3 +13,15 @@ export function listProjectPapers(workspaceId, projectId, { page = 1, limit = 20
 export function askQuestion(paperId, question) {
   return apiClient.post(`/papers/${paperId}/ask`, { question }).then((res) => res.data);
 }
+
+export function uploadPaper({ workspaceId, projectId, reviewType, file }) {
+  const formData = new FormData();
+  formData.append("workspace_id", workspaceId);
+  formData.append("project_id", projectId);
+  formData.append("review_type", reviewType);
+  formData.append("file", file);
+
+  return apiClient
+    .post("/papers/upload", formData, { headers: { "Content-Type": "multipart/form-data" } })
+    .then((res) => res.data);
+}

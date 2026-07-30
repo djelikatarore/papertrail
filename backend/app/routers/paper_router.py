@@ -423,6 +423,34 @@ def download_paper(
     )
 
 
+@router.get("/{paper_id}/visual-elements/{visual_element_id}/image")
+def download_visual_element_image(
+    paper_id: int,
+    visual_element_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Serves the actual image bytes for a figure extracted at upload time.
+    VisualElement only ever stored a server-side disk path (image_path) — there
+    was no way for a client to actually fetch the image itself."""
+    _get_paper_with_access(paper_id, db, current_user)
+
+    visual_element = (
+        db.query(VisualElement)
+        .filter(VisualElement.id == visual_element_id, VisualElement.paper_id == paper_id)
+        .first()
+    )
+    if not visual_element:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visual element not found")
+
+    if not visual_element.image_path or not os.path.exists(visual_element.image_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image file not found on disk")
+
+    ext = visual_element.image_path.rsplit(".", 1)[-1].lower()
+    media_type = "image/png" if ext == "png" else "image/jpeg"
+    return FileResponse(visual_element.image_path, media_type=media_type)
+
+
 @router.post("/{paper_id}/ask", response_model=AskQuestionResponse)
 async def ask_question(
     paper_id: int,

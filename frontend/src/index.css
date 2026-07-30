@@ -6,14 +6,31 @@
 
 @theme {
   --color-accent: #7C3AED;
+  --color-accent-light: #F5F3FF;
   --color-sidebar: #1E1425;
+  --color-sidebar-active: rgba(124, 58, 237, 0.20);
   --color-app-bg: #FAF9FB;
+
+  --color-text: #211C26;
+  --color-muted: #6B6472;
+  --color-border: rgba(33, 28, 38, 0.08);
+  --color-card: #FFFFFF;
+
+  --color-green: #10B981;
+  --color-green-light: #ECFDF5;
+  --color-amber: #F59E0B;
+  --color-amber-light: #FEF3C7;
+  --color-red: #EF4444;
+  --color-red-light: #FEF2F2;
+  --color-teal: #0D9488;
+  --color-teal-light: #F0FDFA;
 
   --font-sans: "Inter", sans-serif;
 
   --radius-card: 16px;
 
   --shadow-card: 0 8px 32px -4px rgba(30, 41, 59, 0.05);
+  --shadow-card-hover: 0 4px 20px rgba(33, 28, 38, 0.09);
 }
 
 body {

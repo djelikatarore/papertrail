@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -204,6 +205,34 @@ def get_draft(
     require_project_access(project_id, membership, db)
 
     return _get_draft_or_404(project_id, draft_id, db)
+
+
+@router.get("/{draft_id}/download")
+def download_draft(
+    workspace_id: int,
+    project_id: int,
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Returns the auto-generated PDF for this draft as an attachment, mirroring
+    GET /papers/{paper_id}/download. pdf_path is only ever a server-side disk
+    path (set by _regenerate_draft_pdf) — there was no way for a client to
+    actually fetch the file itself before this endpoint."""
+    get_workspace_or_404(workspace_id, db)
+    membership = require_member(workspace_id, current_user.id, db)
+    _get_project_or_404(workspace_id, project_id, db)
+    require_project_access(project_id, membership, db)
+    draft = _get_draft_or_404(project_id, draft_id, db)
+
+    if not draft.pdf_path or not os.path.exists(draft.pdf_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF file not found on disk")
+
+    return FileResponse(
+        draft.pdf_path,
+        media_type="application/pdf",
+        filename=f"{draft.title}.pdf",
+    )
 
 
 @router.put("/{draft_id}", response_model=DraftResponse)
