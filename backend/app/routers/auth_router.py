@@ -2,7 +2,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from app.config.settings import FRONTEND_URL, RESET_TOKEN_EXPIRE_MINUTES
@@ -12,6 +12,7 @@ from app.services.auth_service import create_access_token, hash_password, verify
 from app.services.email_service import send_reset_password_email
 from app.utils.auth_dependency import get_current_user
 from app.utils.logging_utils import safe_log
+from app.utils.password_validation import validate_password_strength
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 class SignupRequest(BaseModel):
     full_name: str
     email: EmailStr
-    password: str = Field(min_length=8)
+    password: str
 
 
 class LoginRequest(BaseModel):
@@ -49,7 +50,7 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    new_password: str = Field(min_length=8)
+    new_password: str
 
 
 class MessageResponse(BaseModel):
@@ -64,6 +65,10 @@ class UpdateProfileRequest(BaseModel):
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if not payload.full_name.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Full name cannot be empty")
+
+    password_error = validate_password_strength(payload.password)
+    if password_error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=password_error)
 
     existing_user = db.query(User).filter(User.email == payload.email).first()
     if existing_user:
@@ -139,6 +144,10 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
 
 @router.post("/reset-password", response_model=MessageResponse)
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    password_error = validate_password_strength(payload.new_password)
+    if password_error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=password_error)
+
     invalid_token = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Invalid or expired reset token",

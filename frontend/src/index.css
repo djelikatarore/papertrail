@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+
+@theme {
+  --color-accent: #7C3AED;
+  --color-sidebar: #1E1425;
+  --color-app-bg: #FAF9FB;
+
+  --font-sans: "Inter", sans-serif;
+
+  --radius-card: 16px;
+
+  --shadow-card: 0 8px 32px -4px rgba(30, 41, 59, 0.05);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--color-app-bg);
+}
