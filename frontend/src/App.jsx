@@ -9,6 +9,7 @@ import PaperDetailsPage from "./pages/PaperDetailsPage";
 import ProjectPage from "./pages/ProjectPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import SearchPage from "./pages/SearchPage";
+import SettingsPage from "./pages/SettingsPage";
 import SignupPage from "./pages/SignupPage";
 import WorkspacePage from "./pages/WorkspacePage";
 
@@ -43,6 +44,7 @@ export default function App() {
           path="/workspaces/:workspaceId/projects/:projectId/drafts/generate"
           element={<DraftGenerationPage />}
         />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

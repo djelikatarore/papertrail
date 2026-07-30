@@ -55,6 +55,10 @@ export default function AvatarMenu() {
           </div>
           <button
             type="button"
+            onClick={() => {
+              setOpen(false);
+              navigate("/settings");
+            }}
             className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-text hover:bg-app-bg"
           >
             <User size={14} className="text-muted" /> Your Profile
