@@ -51,7 +51,7 @@ function ProfileTab() {
   }
 
   return (
-    <div className="overflow-hidden rounded-card border border-border bg-card">
+    <div className="overflow-hidden rounded-[var(--radius-card-lg)] border border-border bg-card shadow-card">
       <div className="flex items-center gap-4 border-b border-border px-6 py-5">
         <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-[#A78BFA]">
           <span className="text-xl font-bold text-white">{initials(user?.full_name)}</span>
@@ -77,7 +77,7 @@ function ProfileTab() {
               setFullName(e.target.value);
               setSaved(false);
             }}
-            className="w-full rounded-lg border border-border px-3.5 py-2 text-sm text-text"
+            className="w-full rounded-xl border border-border px-3.5 py-2 text-sm text-text outline-none transition-colors focus:border-accent"
           />
         </div>
 
@@ -85,7 +85,7 @@ function ProfileTab() {
           <label htmlFor="email" className="mb-1 block text-sm font-semibold text-text">
             Email address
           </label>
-          <div className="flex items-center gap-2 rounded-lg border border-border bg-app-bg px-3.5 py-2 text-sm text-muted">
+          <div className="flex items-center gap-2 rounded-xl border border-border bg-app-bg px-3.5 py-2 text-sm text-muted">
             <Mail size={14} />
             <span id="email">{user?.email}</span>
           </div>
@@ -97,11 +97,7 @@ function ProfileTab() {
           </div>
         )}
 
-        <button
-          type="submit"
-          disabled={!canSave}
-          className="self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
-        >
+        <button type="submit" disabled={!canSave} className="btn-primary self-start px-4 py-2">
           {saving ? "Saving..." : "Save changes"}
         </button>
       </form>
@@ -115,16 +111,13 @@ function ProfileTab() {
 // backend enhancement (POST /auth/change-password) rather than built here.
 function PasswordTab() {
   return (
-    <div className="rounded-card border border-border bg-card p-6">
+    <div className="rounded-[var(--radius-card-lg)] border border-border bg-card p-6 shadow-card">
       <h3 className="mb-2 text-[15px] font-bold text-text">Change password</h3>
       <p className="mb-4 text-sm leading-relaxed text-muted">
         Changing your password while logged in isn't available yet. For now, you can reset your
         password by requesting a reset link by email.
       </p>
-      <Link
-        to="/forgot-password"
-        className="inline-flex rounded-lg border border-border px-4 py-2 text-sm font-semibold text-text"
-      >
+      <Link to="/forgot-password" className="btn-secondary inline-flex px-4 py-2">
         Go to Forgot Password
       </Link>
     </div>
@@ -133,7 +126,7 @@ function PasswordTab() {
 
 function NotificationsTab() {
   return (
-    <div className="overflow-hidden rounded-card border border-border bg-card">
+    <div className="overflow-hidden rounded-[var(--radius-card-lg)] border border-border bg-card shadow-card">
       <div className="border-b border-border px-6 py-4">
         <p className="text-sm font-bold text-text">Email preferences</p>
       </div>

@@ -30,7 +30,7 @@ function EyeOffIcon() {
   );
 }
 
-export default function PasswordInput({ value, onChange, className = "" }) {
+export default function PasswordInput({ value, onChange, autoComplete, className = "" }) {
   const [visible, setVisible] = useState(false);
 
   return (
@@ -39,6 +39,7 @@ export default function PasswordInput({ value, onChange, className = "" }) {
         type={visible ? "text" : "password"}
         value={value}
         onChange={onChange}
+        autoComplete={autoComplete}
         maxLength={MAX_PASSWORD_LENGTH}
         className={`w-full rounded-lg border border-gray-300 px-3 py-2 pr-10 text-sm ${className}`}
       />

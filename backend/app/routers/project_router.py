@@ -1,4 +1,4 @@
-import json
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -8,21 +8,23 @@ from math import ceil
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
-from app.config.settings import OFF_TOPIC_SIMILARITY_THRESHOLD
+from app.config.settings import DRAFT_PDF_DIR, OFF_TOPIC_SIMILARITY_THRESHOLD, UPLOAD_DIR
 from app.database import get_db
+from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
-from app.models.models import Paper
+from app.models.draft_document import DraftDocument
+from app.models.models import Paper, TextBlock, VisualElement
 from app.models.project import Project
 from app.models.project_access_restriction import ProjectAccessRestriction
+from app.models.review_comment import ReviewComment
 from app.models.user import User
 from app.models.workspace_member import WorkspaceMember
 from app.routers.paper_router import PaperResponse
 from app.services.arxiv_service import ArxivSearchError, search_arxiv
 from app.services.chat_service import get_history_grouped_by_date, get_or_create_project_session, save_exchange
 from app.services.core_service import CoreSearchError, search_core
-from app.services.embedding_service import cosine_similarity
 from app.services.llm_service import LlmError
 from app.services.pubmed_service import PubmedSearchError, search_pubmed
 from app.services.qa_service import generate_comparative_answer, retrieve_relevant_chunks_multi
@@ -297,38 +299,61 @@ def get_project_similarity(
     current_user: User = Depends(get_current_user),
 ):
     """For each paper in the project that has an embedding, returns the other papers
-    in the same project ranked by cosine similarity (descending). Computed directly
-    from stored embeddings rather than via the FAISS index, since FAISS is indexed
-    globally across all projects and the per-project paper cap (8) makes an O(n^2)
-    comparison trivial and naturally scoped."""
+    in the same project ranked by cosine similarity (descending). Computed by
+    PostgreSQL via pgvector's cosine_distance operator (<=>) on a self-join,
+    rather than loading every embedding into Python — similarity = 1 - distance,
+    exact for these already-unit-normalized vectors (matches the prior
+    numpy-dot-product result bit for bit). FAISS is indexed globally across all
+    projects and still isn't queried here, unchanged from before this migration."""
     get_workspace_or_404(workspace_id, db)
     membership = require_member(workspace_id, current_user.id, db)
     _get_project_or_404(workspace_id, project_id, db)
     require_project_access(project_id, membership, db)
 
-    papers = db.query(Paper).filter(Paper.project_id == project_id, Paper.embedding.isnot(None)).all()
-    embeddings = {p.id: json.loads(p.embedding) for p in papers}
+    papers = db.query(Paper).filter(Paper.project_id == project_id, Paper.embedding_vector.isnot(None)).all()
 
-    results = []
-    for paper in papers:
-        similarities = [
+    source = aliased(Paper)
+    other = aliased(Paper)
+    distance = source.embedding_vector.cosine_distance(other.embedding_vector)
+    pairs = (
+        db.query(
+            source.id.label("paper_id"),
+            other.id.label("other_id"),
+            other.filename.label("other_filename"),
+            other.title.label("other_title"),
+            distance.label("distance"),
+        )
+        .join(other, other.project_id == source.project_id)
+        .filter(
+            source.project_id == project_id,
+            source.embedding_vector.isnot(None),
+            other.embedding_vector.isnot(None),
+            source.id != other.id,
+        )
+        .order_by(source.id, distance)
+        .all()
+    )
+
+    similar_by_paper: dict[int, list[SimilarPaperResponse]] = {}
+    for row in pairs:
+        similar_by_paper.setdefault(row.paper_id, []).append(
             SimilarPaperResponse(
-                paper_id=other.id,
-                filename=other.filename,
-                title=other.title,
-                similarity=cosine_similarity(embeddings[paper.id], embeddings[other.id]),
-            )
-            for other in papers
-            if other.id != paper.id
-        ]
-        similarities.sort(key=lambda s: s.similarity, reverse=True)
-        results.append(
-            PaperSimilarityResponse(
-                paper_id=paper.id, filename=paper.filename, title=paper.title, similar_papers=similarities
+                paper_id=row.other_id,
+                filename=row.other_filename,
+                title=row.other_title,
+                similarity=1 - row.distance,
             )
         )
 
-    return results
+    return [
+        PaperSimilarityResponse(
+            paper_id=paper.id,
+            filename=paper.filename,
+            title=paper.title,
+            similar_papers=similar_by_paper.get(paper.id, []),
+        )
+        for paper in papers
+    ]
 
 
 @router.get("/{project_id}/suggest-papers", response_model=list[SuggestedPaperResponse])
@@ -451,26 +476,43 @@ def get_citation_graph(
     the schema so the frontend can render it once/if real citation counts exist.
     Links are only included above OFF_TOPIC_SIMILARITY_THRESHOLD, the same cutoff
     already used to decide whether two papers are meaningfully related, so the
-    graph doesn't end up fully connected with noise-level edges."""
+    graph doesn't end up fully connected with noise-level edges. Computed by
+    PostgreSQL via pgvector's cosine_distance operator (<=>) on a self-join —
+    same approach as get_project_similarity — with the threshold applied in SQL
+    (similarity >= T is equivalent to distance <= 1 - T) so only qualifying pairs
+    are ever pulled into Python. `source.id < other.id` keeps each undirected
+    pair once, matching the prior itertools-style `papers[i+1:]` pairing."""
     get_workspace_or_404(workspace_id, db)
     membership = require_member(workspace_id, current_user.id, db)
     _get_project_or_404(workspace_id, project_id, db)
     require_project_access(project_id, membership, db)
 
-    papers = db.query(Paper).filter(Paper.project_id == project_id, Paper.embedding.isnot(None)).all()
-    embeddings = {p.id: json.loads(p.embedding) for p in papers}
+    papers = db.query(Paper).filter(Paper.project_id == project_id, Paper.embedding_vector.isnot(None)).all()
 
     nodes = [
         CitationGraphNode(paper_id=p.id, title=p.title or p.filename, citation_count=0)
         for p in papers
     ]
 
-    links = []
-    for i, paper_a in enumerate(papers):
-        for paper_b in papers[i + 1:]:
-            weight = cosine_similarity(embeddings[paper_a.id], embeddings[paper_b.id])
-            if weight >= OFF_TOPIC_SIMILARITY_THRESHOLD:
-                links.append(CitationGraphLink(source=paper_a.id, target=paper_b.id, weight=weight))
+    source = aliased(Paper)
+    other = aliased(Paper)
+    distance = source.embedding_vector.cosine_distance(other.embedding_vector)
+    pairs = (
+        db.query(source.id.label("source_id"), other.id.label("target_id"), distance.label("distance"))
+        .join(other, other.project_id == source.project_id)
+        .filter(
+            source.project_id == project_id,
+            source.embedding_vector.isnot(None),
+            other.embedding_vector.isnot(None),
+            source.id < other.id,
+            distance <= 1 - OFF_TOPIC_SIMILARITY_THRESHOLD,
+        )
+        .all()
+    )
+    links = [
+        CitationGraphLink(source=row.source_id, target=row.target_id, weight=1 - row.distance)
+        for row in pairs
+    ]
 
     return CitationGraphResponse(nodes=nodes, links=links)
 
@@ -717,6 +759,14 @@ def update_project(
     return project
 
 
+def _delete_file_if_exists(path: str | None) -> None:
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError as exc:
+            safe_log(f"[project_router] Failed to delete file {path}: {exc}")
+
+
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(
     workspace_id: int,
@@ -724,6 +774,11 @@ def delete_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Deletes a project and everything that belongs only to it: papers (and
+    their text blocks, visual elements, and uploaded PDF files), drafts (and
+    their review comments and generated PDF files), and this project's chat
+    history (the project-wide comparative session plus every per-paper
+    session). workspace_members and the workspace itself are untouched."""
     workspace = get_workspace_or_404(workspace_id, db)
     require_member(workspace_id, current_user.id, db)
     project = _get_project_or_404(workspace_id, project_id, db)
@@ -733,6 +788,51 @@ def delete_project(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the workspace owner can delete a project",
         )
+
+    paper_ids = [pid for (pid,) in db.query(Paper.id).filter(Paper.project_id == project_id).all()]
+    draft_ids = [did for (did,) in db.query(DraftDocument.id).filter(DraftDocument.project_id == project_id).all()]
+
+    if paper_ids:
+        visual_element_paths = [
+            path
+            for (path,) in db.query(VisualElement.image_path)
+            .filter(VisualElement.paper_id.in_(paper_ids))
+            .all()
+        ]
+        for path in visual_element_paths:
+            _delete_file_if_exists(path)
+        db.query(VisualElement).filter(VisualElement.paper_id.in_(paper_ids)).delete(synchronize_session=False)
+        db.query(TextBlock).filter(TextBlock.paper_id.in_(paper_ids)).delete(synchronize_session=False)
+        for paper_id in paper_ids:
+            _delete_file_if_exists(os.path.join(UPLOAD_DIR, f"{paper_id}.pdf"))
+
+    if draft_ids:
+        draft_pdf_paths = [
+            path for (path,) in db.query(DraftDocument.pdf_path).filter(DraftDocument.id.in_(draft_ids)).all()
+        ]
+        for path in draft_pdf_paths:
+            _delete_file_if_exists(path)
+        db.query(ReviewComment).filter(ReviewComment.draft_document_id.in_(draft_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(DraftDocument).filter(DraftDocument.id.in_(draft_ids)).delete(synchronize_session=False)
+
+    chat_session_ids = [
+        sid
+        for (sid,) in db.query(ChatSession.id)
+        .filter((ChatSession.project_id == project_id) | (ChatSession.paper_id.in_(paper_ids or [-1])))
+        .all()
+    ]
+    if chat_session_ids:
+        db.query(ChatMessage).filter(ChatMessage.session_id.in_(chat_session_ids)).delete(synchronize_session=False)
+        db.query(ChatSession).filter(ChatSession.id.in_(chat_session_ids)).delete(synchronize_session=False)
+
+    if paper_ids:
+        db.query(Paper).filter(Paper.id.in_(paper_ids)).delete(synchronize_session=False)
+
+    db.query(ProjectAccessRestriction).filter(ProjectAccessRestriction.project_id == project_id).delete(
+        synchronize_session=False
+    )
 
     db.delete(project)
     db.commit()

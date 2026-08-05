@@ -1,33 +1,16 @@
 import { Download, FileText, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import ErrorBanner from "../components/ErrorBanner";
 import PaperCard from "../components/PaperCard";
 import { downloadDraftPdf, generateDraft } from "../services/draftService";
 import { listProjectPapers } from "../services/paperService";
 import { DOCUMENT_TYPE_LABELS, DOCUMENT_TYPES } from "../utils/documentTypes";
-
-// The generation prompt always asks the model for "## Section Name" Markdown
-// headers (see backend/app/services/draft_generation_service.py::
-// _build_draft_prompt) — splitting on that real structure lets the result
-// render as one card per section like the Figma reference, without inventing
-// any section data that isn't actually in draft.content.
-function splitIntoSections(content) {
-  if (!content) return [];
-  const matches = [...content.matchAll(/^##\s+(.+)$/gm)];
-  if (matches.length === 0) return [{ title: null, body: content.trim() }];
-
-  return matches.map((match, i) => {
-    const start = match.index + match[0].length;
-    const end = i + 1 < matches.length ? matches[i + 1].index : content.length;
-    return { title: match[1].trim(), body: content.slice(start, end).trim() };
-  });
-}
+import { splitIntoSections } from "../utils/draftSections";
 
 export default function DraftGenerationPage() {
   const { workspaceId, projectId } = useParams();
-  const navigate = useNavigate();
 
   const [papers, setPapers] = useState([]);
   const [loadingPapers, setLoadingPapers] = useState(true);
@@ -85,10 +68,9 @@ export default function DraftGenerationPage() {
       workspaceId={workspaceId}
       title="Draft Generation"
       subtitle="Generate a structured draft from your project's papers"
-      onBack={() => navigate(`/workspaces/${workspaceId}/projects/${projectId}`)}
     >
       <div className="grid grid-cols-1 gap-6 p-10 md:grid-cols-[260px_1fr]">
-        <div className="h-fit rounded-card border border-border bg-card p-5 shadow-card md:sticky md:top-5">
+        <div className="h-fit rounded-[var(--radius-card-lg)] border border-border bg-card p-5 shadow-card md:sticky md:top-5">
           <p className="mb-3.5 text-sm font-bold text-text">Document type</p>
           <select
             value={documentType}
@@ -134,7 +116,7 @@ export default function DraftGenerationPage() {
             type="button"
             onClick={handleGenerate}
             disabled={selectedIds.size === 0 || generating}
-            className="mt-5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+            className="btn-primary mt-5 w-full py-2.5"
           >
             <Sparkles size={14} /> {generating ? "Generating..." : "Generate Draft"}
           </button>
@@ -173,7 +155,7 @@ export default function DraftGenerationPage() {
 
           {draft && !generating && (
             <div className="flex flex-col gap-4">
-              <div className="rounded-card border border-border bg-card p-5 shadow-card">
+              <div className="rounded-[var(--radius-card-lg)] border border-border bg-card p-5 shadow-card">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-lg font-bold text-text">{draft.title}</h2>
                   <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -187,14 +169,14 @@ export default function DraftGenerationPage() {
                 </div>
 
                 {draft.pdf_path && (
-                  <div className="mt-3 flex items-center justify-between rounded-lg bg-app-bg px-3.5 py-2.5">
+                  <div className="mt-3 flex items-center justify-between rounded-xl bg-app-bg px-3.5 py-2.5">
                     <div className="flex items-center gap-2 text-xs text-muted">
                       <FileText size={14} /> PDF generated from this draft
                     </div>
                     <button
                       type="button"
                       onClick={() => downloadDraftPdf(workspaceId, projectId, draft)}
-                      className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white"
+                      className="btn-primary px-3 py-1.5 text-xs"
                     >
                       <Download size={12} /> Download PDF
                     </button>

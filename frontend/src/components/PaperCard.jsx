@@ -1,12 +1,14 @@
-import { Check } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import PaperTypeBadge from "./PaperTypeBadge";
 import ReviewTypeBadge from "./ReviewTypeBadge";
 import FigureProgress, { StatusPill } from "./StatusBadge";
 
 // `selected` is optional and only meaningful when a caller (e.g. Draft
 // Generation's multi-select paper picker) passes it — plain usage (Library
-// list, onClick navigates to Paper Details) is unaffected.
-export default function PaperCard({ paper, onClick, selected }) {
+// list, onClick navigates to Paper Details) is unaffected. `onDelete` is
+// likewise optional — only the Library list passes it; picker contexts
+// (Draft Generation, Project Chat) never do, so no delete icon appears there.
+export default function PaperCard({ paper, onClick, selected, onDelete }) {
   // Real title is only known once processing has extracted it — filename is
   // never shown to the user, but it's the only thing we have while PROCESSING.
   const displayTitle = paper.title ?? paper.filename;
@@ -28,7 +30,7 @@ export default function PaperCard({ paper, onClick, selected }) {
             }
           : undefined
       }
-      className={`cursor-pointer rounded-card border bg-card p-5 shadow-card transition-shadow hover:shadow-card-hover ${
+      className={`cursor-pointer rounded-[var(--radius-card-lg)] border bg-card p-5 shadow-card transition-shadow hover:shadow-card-hover ${
         isSelectable && selected ? "border-accent ring-1 ring-accent" : "border-border"
       }`}
     >
@@ -47,6 +49,19 @@ export default function PaperCard({ paper, onClick, selected }) {
           <StatusPill status={paper.status} />
           <ReviewTypeBadge reviewType={paper.review_type} />
           <PaperTypeBadge detectedPaperType={paper.detected_paper_type} />
+          {onDelete && (
+            <button
+              type="button"
+              aria-label="Delete paper"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(paper);
+              }}
+              className="rounded-md p-1 text-muted transition-colors hover:bg-red-light hover:text-red"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
         </div>
       </div>
       {paper.status === "ERROR" && paper.error_message && (

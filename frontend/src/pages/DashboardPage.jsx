@@ -5,7 +5,6 @@ import AppShell from "../components/AppShell";
 import ErrorBanner from "../components/ErrorBanner";
 import ProjectCard from "../components/ProjectCard";
 import { useAuth } from "../context/AuthContext";
-import { createProject } from "../services/projectService";
 import { createWorkspace, listProjects, listWorkspaces } from "../services/workspaceService";
 
 export default function DashboardPage() {
@@ -62,7 +61,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <AppShell title="Dashboard">
+      <AppShell title="Dashboard" showBack={false}>
         <div className="p-10 text-sm text-muted">Loading...</div>
       </AppShell>
     );
@@ -70,9 +69,9 @@ export default function DashboardPage() {
 
   if (!workspace) {
     return (
-      <AppShell title="Dashboard">
+      <AppShell title="Dashboard" showBack={false}>
         <div className="mx-auto max-w-md p-10">
-          <div className="rounded-card border border-border bg-card p-8 shadow-card">
+          <div className="rounded-[var(--radius-card-lg)] border border-border bg-card p-8 shadow-card">
             <h2 className="mb-2 text-lg font-bold text-text">Create your first workspace</h2>
             <p className="mb-5 text-sm text-muted">
               A workspace holds your projects and papers. You don't have one yet.
@@ -88,12 +87,12 @@ export default function DashboardPage() {
                 value={newWorkspaceName}
                 onChange={(e) => setNewWorkspaceName(e.target.value)}
                 placeholder="e.g. MIT Research Lab"
-                className="flex-1 rounded-lg border border-border px-3.5 py-2 text-sm"
+                className="flex-1 rounded-xl border border-border px-3.5 py-2 text-sm outline-none transition-colors focus:border-accent"
               />
               <button
                 type="submit"
                 disabled={!newWorkspaceName.trim() || creatingWorkspace}
-                className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                className="btn-primary px-4 py-2"
               >
                 Create
               </button>
@@ -105,12 +104,15 @@ export default function DashboardPage() {
   }
 
   return (
-    <AppShell workspaceId={workspace.id} title="Dashboard" subtitle={workspace.name}>
+    <AppShell workspaceId={workspace.id} title="Dashboard" subtitle={workspace.name} showBack={false}>
       <div className="p-10">
         <div className="mb-7 flex items-center justify-between">
-          <p className="text-sm text-muted">
-            {user ? `Welcome back, ${user.full_name}` : ""}
-          </p>
+          <div>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-accent">Overview</p>
+            <p className="text-sm text-muted">
+              {user ? `Welcome back, ${user.full_name}` : ""}
+            </p>
+          </div>
         </div>
 
         {error && (
@@ -120,11 +122,11 @@ export default function DashboardPage() {
         )}
 
         <div className="mb-8 grid grid-cols-4 gap-4">
-          <div className="rounded-card border border-border bg-card p-5 shadow-card">
-            <div className="mb-3.5 flex h-[38px] w-[38px] items-center justify-center rounded-[10px] bg-accent-light">
+          <div className="rounded-[var(--radius-card-lg)] border border-border bg-card p-5 shadow-card transition-shadow hover:shadow-card-hover">
+            <div className="mb-3.5 flex h-10 w-10 items-center justify-center rounded-xl bg-accent-light">
               <FolderOpen size={18} className="text-accent" strokeWidth={1.5} />
             </div>
-            <p className="mb-0.5 text-[26px] font-bold text-text">{projectsTotal}</p>
+            <p className="mb-0.5 text-[26px] font-bold tracking-tight text-text">{projectsTotal}</p>
             <p className="text-xs text-muted">Projects</p>
           </div>
         </div>
@@ -144,7 +146,7 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={() => navigate(`/workspaces/${workspace.id}`)}
-            className="flex w-full flex-col items-center gap-2.5 rounded-card border-2 border-dashed border-border py-10 text-muted"
+            className="flex w-full flex-col items-center gap-2.5 rounded-[var(--radius-card-lg)] border-2 border-dashed border-border py-10 text-muted transition-colors hover:border-accent/40 hover:text-accent"
           >
             <Plus size={18} className="text-accent" />
             <span className="text-sm font-semibold">Create your first project</span>

@@ -6,8 +6,10 @@
 
 @theme {
   --color-accent: #7C3AED;
+  --color-accent-dark: #6D28D9;
   --color-accent-light: #F5F3FF;
   --color-sidebar: #1E1425;
+  --color-sidebar-hover: rgba(255, 255, 255, 0.05);
   --color-sidebar-active: rgba(124, 58, 237, 0.20);
   --color-app-bg: #FAF9FB;
 
@@ -28,13 +30,80 @@
   --font-sans: "Inter", sans-serif;
 
   --radius-card: 16px;
+  --radius-card-lg: 24px;
 
-  --shadow-card: 0 8px 32px -4px rgba(30, 41, 59, 0.05);
-  --shadow-card-hover: 0 4px 20px rgba(33, 28, 38, 0.09);
+  --shadow-card: 0 8px 32px -4px rgba(33, 28, 38, 0.05), 0 1px 3px rgba(33, 28, 38, 0.04);
+  --shadow-card-hover: 0 16px 48px -8px rgba(33, 28, 38, 0.10), 0 1px 4px rgba(33, 28, 38, 0.06);
+  --shadow-accent: 0 8px 24px -4px rgba(124, 58, 237, 0.26);
+  --shadow-modal: 0 24px 80px rgba(33, 28, 38, 0.20);
 }
 
 body {
   margin: 0;
   font-family: var(--font-sans);
   background: var(--color-app-bg);
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border-radius: 0.75rem;
+  background: var(--color-accent);
+  box-shadow: var(--shadow-accent);
+  color: white;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: background-color 0.15s ease;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-accent-dark);
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-app-bg);
+}
+.btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-modal-in {
+  animation: modal-in 0.15s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fade-in 0.15s ease-out;
 }

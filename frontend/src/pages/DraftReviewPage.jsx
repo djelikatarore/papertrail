@@ -1,20 +1,30 @@
-import { PenTool, Sparkles, Upload } from "lucide-react";
+import { Pencil, PenTool, Plus, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
+import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import ErrorBanner from "../components/ErrorBanner";
+import Modal from "../components/Modal";
 import SuggestionCard from "../components/SuggestionCard";
+import { useAuth } from "../context/AuthContext";
 import {
+  createDraft,
+  createReviewComment,
+  deleteDraft,
+  deleteReviewComment,
   listDrafts,
   listReviewComments,
   submitDraftFeedback,
+  updateDraft,
   updateReviewComment,
 } from "../services/draftService";
-import { DOCUMENT_TYPE_LABELS } from "../utils/documentTypes";
+import { DOCUMENT_TYPE_LABELS, DOCUMENT_TYPES } from "../utils/documentTypes";
+import { splitIntoSections } from "../utils/draftSections";
+import { listWorkspaces } from "../services/workspaceService";
 
 export default function DraftReviewPage() {
   const { workspaceId, projectId } = useParams();
-  const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [drafts, setDrafts] = useState([]);
   const [loadingDrafts, setLoadingDrafts] = useState(true);
@@ -30,12 +40,109 @@ export default function DraftReviewPage() {
   const [discardedCount, setDiscardedCount] = useState(0);
   const [error, setError] = useState(null);
 
+  const [editingContent, setEditingContent] = useState(false);
+  const [editedContent, setEditedContent] = useState("");
+  const [savingContent, setSavingContent] = useState(false);
+
+  const [isOwner, setIsOwner] = useState(false);
+  const [draftToDelete, setDraftToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+
+  const [noteText, setNoteText] = useState("");
+  const [addingNote, setAddingNote] = useState(false);
+
+  const [showNewDraftModal, setShowNewDraftModal] = useState(false);
+  const [newDraftTitle, setNewDraftTitle] = useState("");
+  const [newDraftType, setNewDraftType] = useState(DOCUMENT_TYPES[0]);
+  const [newDraftContent, setNewDraftContent] = useState("");
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [newDraftError, setNewDraftError] = useState(null);
+
   useEffect(() => {
     listDrafts(workspaceId, projectId)
       .then(setDrafts)
       .catch(() => setError("Could not load drafts. Please try again."))
       .finally(() => setLoadingDrafts(false));
+    listWorkspaces()
+      .then((workspaces) => {
+        const current = workspaces.find((w) => w.id === Number(workspaceId));
+        setIsOwner(current?.role === "OWNER");
+      })
+      .catch(() => {});
   }, [workspaceId, projectId]);
+
+  async function handleDeleteDraft() {
+    if (deleting || !draftToDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteDraft(workspaceId, projectId, draftToDelete.id);
+      setDrafts((prev) => prev.filter((d) => d.id !== draftToDelete.id));
+      setDraftToDelete(null);
+    } catch {
+      setDeleteError("Could not delete this draft. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function openNewDraftModal() {
+    setNewDraftTitle("");
+    setNewDraftType(DOCUMENT_TYPES[0]);
+    setNewDraftContent("");
+    setNewDraftError(null);
+    setShowNewDraftModal(true);
+  }
+
+  async function handleCreateDraft(event) {
+    event.preventDefault();
+    if (!newDraftTitle.trim() || creatingDraft) return;
+    setCreatingDraft(true);
+    setNewDraftError(null);
+    try {
+      const draft = await createDraft(workspaceId, projectId, {
+        title: newDraftTitle.trim(),
+        documentType: newDraftType,
+        content: newDraftContent.trim() || null,
+      });
+      setDrafts((prev) => [...prev, draft]);
+      setShowNewDraftModal(false);
+      selectDraft(draft);
+    } catch {
+      setNewDraftError("Could not create this draft. Please try again.");
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
+
+  async function handleDeleteComment(comment) {
+    const previous = comments;
+    setComments((prev) => prev.filter((c) => c.id !== comment.id));
+    try {
+      await deleteReviewComment(workspaceId, projectId, selectedDraft.id, comment.id);
+    } catch {
+      setComments(previous);
+      setError("Could not delete this comment. Please try again.");
+    }
+  }
+
+  async function handleAddNote(event) {
+    event.preventDefault();
+    const trimmed = noteText.trim();
+    if (!trimmed || addingNote) return;
+    setAddingNote(true);
+    setError(null);
+    try {
+      const comment = await createReviewComment(workspaceId, projectId, selectedDraft.id, trimmed);
+      setComments((prev) => [...prev, comment]);
+      setNoteText("");
+    } catch {
+      setError("Could not add this note. Please try again.");
+    } finally {
+      setAddingNote(false);
+    }
+  }
 
   function selectDraft(draft) {
     setSelectedDraft(draft);
@@ -44,11 +151,39 @@ export default function DraftReviewPage() {
     setFeedbackText("");
     setFeedbackFile(null);
     setFeedbackMode("text");
+    setEditingContent(false);
     setLoadingComments(true);
     listReviewComments(workspaceId, projectId, draft.id)
       .then(setComments)
       .catch(() => setError("Could not load review comments for this draft."))
       .finally(() => setLoadingComments(false));
+  }
+
+  function startEditingContent() {
+    setEditedContent(selectedDraft.content ?? "");
+    setEditingContent(true);
+  }
+
+  function cancelEditingContent() {
+    setEditingContent(false);
+  }
+
+  async function saveEditedContent() {
+    if (savingContent) return;
+    setSavingContent(true);
+    setError(null);
+    try {
+      const updated = await updateDraft(workspaceId, projectId, selectedDraft.id, {
+        content: editedContent,
+      });
+      setSelectedDraft(updated);
+      setDrafts((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+      setEditingContent(false);
+    } catch (err) {
+      setError(err.response?.data?.detail ?? "Could not save this draft. Please try again.");
+    } finally {
+      setSavingContent(false);
+    }
   }
 
   const canAnalyze =
@@ -93,17 +228,22 @@ export default function DraftReviewPage() {
         workspaceId={workspaceId}
         title="Draft Review"
         subtitle="Select a draft to review"
-        onBack={() => navigate(`/workspaces/${workspaceId}/projects/${projectId}`)}
       >
         <div className="p-10">
+          <div className="mb-4 flex justify-end">
+            <button type="button" onClick={openNewDraftModal} className="btn-secondary px-4 py-2">
+              <Plus size={15} /> New Draft
+            </button>
+          </div>
+
           {error && (
             <div className="mb-6">
               <ErrorBanner message={error} />
             </div>
           )}
           {!loadingDrafts && drafts.length === 0 && (
-            <p className="text-sm text-muted">
-              No drafts exist in this project yet. Generate one first from Draft Generation.
+            <p className="mb-4 text-sm text-muted">
+              No drafts exist in this project yet. Generate one from Draft Generation, or create one manually.
             </p>
           )}
           <div className="flex flex-col gap-2.5">
@@ -112,7 +252,7 @@ export default function DraftReviewPage() {
                 key={draft.id}
                 type="button"
                 onClick={() => selectDraft(draft)}
-                className="flex items-center justify-between rounded-card border border-border bg-card p-4 text-left shadow-card hover:shadow-card-hover"
+                className="flex items-center justify-between rounded-[var(--radius-card-lg)] border border-border bg-card p-4 text-left shadow-card transition-shadow hover:shadow-card-hover"
               >
                 <div>
                   <p className="text-sm font-semibold text-text">{draft.title}</p>
@@ -120,13 +260,109 @@ export default function DraftReviewPage() {
                     {DOCUMENT_TYPE_LABELS[draft.document_type] ?? draft.document_type} · v{draft.version}
                   </p>
                 </div>
-                <span className="rounded-full bg-accent-light px-2 py-0.5 text-[11px] font-semibold text-accent">
-                  {draft.status}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full bg-accent-light px-2 py-0.5 text-[11px] font-semibold text-accent">
+                    {draft.status}
+                  </span>
+                  {isOwner && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-label="Delete draft"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDraftToDelete(draft);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.stopPropagation();
+                          setDraftToDelete(draft);
+                        }
+                      }}
+                      className="rounded-md p-1.5 text-muted hover:bg-red-light hover:text-red"
+                    >
+                      <Trash2 size={14} />
+                    </span>
+                  )}
+                </div>
               </button>
             ))}
           </div>
         </div>
+
+        {showNewDraftModal && (
+          <Modal onClose={() => (creatingDraft ? null : setShowNewDraftModal(false))}>
+            <h3 className="mb-6 pr-6 text-lg font-bold text-text">New Draft</h3>
+            <form onSubmit={handleCreateDraft} className="flex flex-col gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-text">Title</label>
+                <input
+                  type="text"
+                  value={newDraftTitle}
+                  onChange={(e) => setNewDraftTitle(e.target.value)}
+                  placeholder="e.g. Literature Review Draft"
+                  className="w-full rounded-lg border border-border px-3.5 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-text">Document type</label>
+                <select
+                  value={newDraftType}
+                  onChange={(e) => setNewDraftType(e.target.value)}
+                  className="w-full rounded-lg border border-border px-3 py-2 text-sm text-text"
+                >
+                  {DOCUMENT_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {DOCUMENT_TYPE_LABELS[type]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-text">
+                  Content <span className="font-normal text-muted">(optional — can add later via Edit)</span>
+                </label>
+                <textarea
+                  value={newDraftContent}
+                  onChange={(e) => setNewDraftContent(e.target.value)}
+                  rows={5}
+                  placeholder="Start writing, or leave blank and fill it in afterward…"
+                  className="w-full resize-y rounded-lg border border-border px-3.5 py-2 text-sm"
+                />
+              </div>
+              {newDraftError && <ErrorBanner message={newDraftError} />}
+              <div className="mt-2 flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowNewDraftModal(false)}
+                  disabled={creatingDraft}
+                  className="btn-secondary flex-1 py-2.5"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newDraftTitle.trim() || creatingDraft}
+                  className="btn-primary flex-1 py-2.5"
+                >
+                  {creatingDraft ? "Creating..." : "Create Draft"}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        )}
+
+        {draftToDelete && (
+          <ConfirmDeleteModal
+            title={`Delete "${draftToDelete.title}"?`}
+            description="This permanently deletes this draft and its review comments. This cannot be undone."
+            confirmLabel="Delete draft"
+            deleting={deleting}
+            error={deleteError}
+            onConfirm={handleDeleteDraft}
+            onClose={() => setDraftToDelete(null)}
+          />
+        )}
       </AppShell>
     );
   }
@@ -146,16 +382,71 @@ export default function DraftReviewPage() {
             </div>
           )}
 
-          <div className="mb-4 overflow-hidden rounded-card border border-border bg-card">
-            <div className="border-b border-border px-5 py-3.5">
-              <p className="text-sm font-bold text-text">Draft Content</p>
+          <div className="mb-4 overflow-hidden rounded-[var(--radius-card-lg)] border border-border bg-card shadow-card">
+            <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-bold text-text">Draft Content</p>
+                <span className="rounded-full bg-border px-2 py-0.5 text-[11px] font-semibold text-muted">
+                  v{selectedDraft.version}
+                </span>
+              </div>
+              {editingContent ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={cancelEditingContent}
+                    disabled={savingContent}
+                    className="flex items-center gap-1 text-xs font-semibold text-muted disabled:opacity-40"
+                  >
+                    <X size={12} /> Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveEditedContent}
+                    disabled={savingContent}
+                    className="btn-primary px-2.5 py-1 text-xs"
+                  >
+                    {savingContent ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startEditingContent}
+                  className="flex items-center gap-1 text-xs font-semibold text-accent"
+                >
+                  <Pencil size={12} /> Edit
+                </button>
+              )}
             </div>
-            <div className="max-h-64 overflow-auto whitespace-pre-wrap px-5 py-4 text-[13.5px] leading-relaxed text-text">
-              {selectedDraft.content ?? "This draft has no content yet."}
-            </div>
+            {editingContent ? (
+              <textarea
+                value={editedContent}
+                onChange={(e) => setEditedContent(e.target.value)}
+                rows={14}
+                className="w-full resize-y border-none px-5 py-4 font-mono text-[13px] leading-relaxed text-text outline-none"
+              />
+            ) : (
+              <div className="max-h-64 overflow-auto px-5 py-4">
+                {selectedDraft.content ? (
+                  splitIntoSections(selectedDraft.content).map((section, i) => (
+                    <div key={i} className={i > 0 ? "mt-4" : undefined}>
+                      {section.title && (
+                        <p className="mb-1 text-xs font-bold text-text">{section.title}</p>
+                      )}
+                      <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-text">
+                        {section.body}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-[13.5px] leading-relaxed text-text">This draft has no content yet.</p>
+                )}
+              </div>
+            )}
           </div>
 
-          <div className="mb-4 overflow-hidden rounded-card border border-border bg-card">
+          <div className="mb-4 overflow-hidden rounded-[var(--radius-card-lg)] border border-border bg-card shadow-card">
             <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
               <p className="text-sm font-bold text-text">Reviewer Feedback</p>
               <div className="flex gap-1 rounded-lg bg-app-bg p-0.5">
@@ -207,7 +498,7 @@ export default function DraftReviewPage() {
             type="button"
             onClick={handleAnalyze}
             disabled={!canAnalyze || analyzing}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+            className="btn-primary w-full py-2.5"
           >
             <Sparkles size={14} /> {analyzing ? "Analyzing..." : "Analyze with AI"}
           </button>
@@ -221,6 +512,27 @@ export default function DraftReviewPage() {
         </div>
 
         <div>
+          <form onSubmit={handleAddNote} className="mb-4 flex gap-2">
+            <label htmlFor="manual-note" className="sr-only">
+              Add a manual review note
+            </label>
+            <input
+              id="manual-note"
+              type="text"
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              placeholder="Add a note (not run through AI)…"
+              className="flex-1 rounded-xl border border-border px-3.5 py-2 text-sm text-text outline-none transition-colors focus:border-accent"
+            />
+            <button
+              type="submit"
+              disabled={!noteText.trim() || addingNote}
+              className="btn-secondary px-3 py-2 text-xs"
+            >
+              <Plus size={13} /> {addingNote ? "Adding..." : "Add note"}
+            </button>
+          </form>
+
           {loadingComments ? (
             <p className="text-sm text-muted">Loading suggestions...</p>
           ) : comments.length === 0 ? (
@@ -231,6 +543,11 @@ export default function DraftReviewPage() {
             </div>
           ) : (
             <>
+              <p className="mb-3 text-xs text-muted">
+                Accept/Dismiss only marks a suggestion as reviewed — it doesn't change the draft.
+                To apply a suggestion, edit the draft content yourself using the{" "}
+                <span className="font-semibold text-text">Edit</span> button.
+              </p>
               <div className="mb-4 flex items-center justify-between">
                 <p className="text-sm font-bold text-text">{comments.length} suggestions</p>
                 <div className="flex gap-2">
@@ -258,6 +575,8 @@ export default function DraftReviewPage() {
                     comment={comment}
                     onAccept={(c) => handleStatusChange(c, "ACCEPTED")}
                     onDismiss={(c) => handleStatusChange(c, "DISMISSED")}
+                    onDelete={handleDeleteComment}
+                    canDelete={comment.user_id === user?.id || isOwner}
                   />
                 ))}
               </div>

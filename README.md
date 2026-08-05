@@ -8,13 +8,14 @@ drafts from the papers they've collected.
 
 ## Tech stack
 
-Backend: FastAPI, SQLite (SQLAlchemy)
+Backend: FastAPI, PostgreSQL (SQLAlchemy) with the pgvector extension
 
 Authentication: JWT, Gmail SMTP for password reset emails
 
 AI: Groq (text and vision models) for summarization, keyword extraction,
 paper type detection, grounded Q&A, and draft generation. sentence-transformers
-for embeddings, FAISS for similarity search.
+for embeddings, pgvector (native PostgreSQL cosine similarity) for similarity
+search, similar papers, citation graph, and grounded Q&A retrieval.
 
 PDF processing: PyMuPDF for text and figure extraction, Tesseract for OCR on
 scanned pages.
@@ -47,7 +48,7 @@ papertrail/
       services/
         pdf_service.py, chunking_service.py, ocr_service.py,
         summary_service.py, keyword_service.py, paper_type_service.py,
-        embedding_service.py, faiss_service.py, qa_service.py,
+        embedding_service.py, qa_service.py,
         draft_generation_service.py, draft_pdf_service.py,
         feedback_service.py, llm_service.py, email_service.py,
         arxiv_service.py, core_service.py, pubmed_service.py
@@ -58,8 +59,9 @@ papertrail/
 
 ## Setup and running the backend
 
-Requirements: Python 3.11+, a Groq API key, and (optionally) a Tesseract OCR
-installation for scanned PDFs.
+Requirements: Python 3.11+, PostgreSQL with the pgvector extension enabled,
+a Groq API key, and (optionally) a Tesseract OCR installation for scanned
+PDFs.
 
 Create and activate a virtual environment, then install dependencies:
 
@@ -75,7 +77,11 @@ Create a `.env` file inside `backend/` with at least:
 ```
 JWT_SECRET_KEY=your-secret-key
 GROQ_API_KEY=your-groq-api-key
+DATABASE_URL=postgresql://user:password@localhost:5432/papertrail
 ```
+
+The `vector` extension must be created once in the target database
+(`CREATE EXTENSION vector;`) before starting the app.
 
 Other environment variables (Gmail credentials for password reset emails,
 CORE API key for paper suggestions, various thresholds and file paths) have
@@ -104,8 +110,8 @@ AI summarization: automatic contribution/methodology/key results/limitations
 summary and keyword extraction for each uploaded paper, with anti-hallucination
 verification against the source text.
 
-Similarity and citation graph: embedding-based similarity between papers in a
-project, off-topic detection, and a citation graph view.
+Similarity and citation graph: pgvector-based embedding similarity between
+papers in a project, off-topic detection, and a citation graph view.
 
 Grounded Q&A: single-paper and multi-paper question answering, with answers
 required to cite verifiable source sections, plus persistent chat history.

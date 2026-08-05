@@ -23,3 +23,15 @@ export function searchWorkspace(workspaceId, query) {
     .get(`/workspaces/${workspaceId}/search`, { params: { q: query } })
     .then((res) => res.data);
 }
+
+export function getInviteLink(workspaceId) {
+  return apiClient.get(`/workspaces/${workspaceId}/invite-link`).then((res) => res.data);
+}
+
+export function inviteByEmail(workspaceId, email) {
+  return apiClient.post(`/workspaces/${workspaceId}/invite`, { email }).then((res) => res.data);
+}
+
+export function joinWorkspace(token) {
+  return apiClient.post(`/workspaces/join/${token}`).then((res) => res.data);
+}

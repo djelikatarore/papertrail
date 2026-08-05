@@ -1,6 +1,6 @@
 import { ExternalLink, FileDown, Search as SearchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import ErrorBanner from "../components/ErrorBanner";
 import SourceBadge from "../components/SourceBadge";
@@ -8,7 +8,6 @@ import { getProject, suggestPapers } from "../services/projectService";
 
 export default function SearchPage() {
   const { workspaceId, projectId } = useParams();
-  const navigate = useNavigate();
 
   const [project, setProject] = useState(null);
   const [dateFrom, setDateFrom] = useState("");
@@ -43,12 +42,11 @@ export default function SearchPage() {
       workspaceId={workspaceId}
       title="Suggested Papers"
       subtitle={project ? `Based on "${project.topic}" — sources: arXiv, CORE, PubMed` : undefined}
-      onBack={() => navigate(`/workspaces/${workspaceId}/projects/${projectId}`)}
     >
       <div className="p-10">
         <form
           onSubmit={handleSearch}
-          className="mb-6 grid grid-cols-4 gap-3 rounded-card border border-border bg-card p-5 shadow-card"
+          className="mb-6 grid grid-cols-4 gap-3 rounded-[var(--radius-card-lg)] border border-border bg-card p-5 shadow-card"
         >
           <div>
             <label className="mb-1 block text-xs font-semibold text-muted">From year</label>
@@ -90,11 +88,7 @@ export default function SearchPage() {
               className="w-full rounded-lg border border-border px-3 py-1.5 text-sm"
             />
           </div>
-          <button
-            type="submit"
-            disabled={searching}
-            className="col-span-4 flex items-center justify-center gap-1.5 rounded-lg bg-accent py-2 text-sm font-semibold text-white disabled:opacity-40"
-          >
+          <button type="submit" disabled={searching} className="btn-primary col-span-4 py-2">
             <SearchIcon size={14} /> {searching ? "Searching..." : "Find suggested papers"}
           </button>
         </form>
@@ -112,7 +106,7 @@ export default function SearchPage() {
         {results && results.length > 0 && (
           <div className="flex flex-col gap-3">
             {results.map((paper, i) => (
-              <div key={i} className="rounded-card border border-border bg-card p-5 shadow-card">
+              <div key={i} className="rounded-[var(--radius-card-lg)] border border-border bg-card p-5 shadow-card transition-shadow hover:shadow-card-hover">
                 <div className="mb-1.5 flex items-start justify-between gap-3">
                   <p className="text-sm font-semibold leading-snug text-text">{paper.title}</p>
                   <SourceBadge source={paper.source} />

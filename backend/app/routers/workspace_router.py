@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config.settings import FRONTEND_URL, VALID_REVIEW_TYPES
@@ -237,7 +238,15 @@ def invite_user_by_email(
         joined_at=datetime.now(timezone.utc).isoformat(),
     )
     db.add(membership)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # The pre-check above isn't atomic — two concurrent invites for the
+        # same email can both pass it before either commits. The DB-level
+        # unique constraint (workspace_id, user_id) is the real guard; this
+        # just turns its violation into the same clean 409 instead of a raw 500.
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User is already a member of this workspace")
     db.refresh(membership)
 
     return membership
@@ -363,6 +372,13 @@ def join_workspace_by_link(
         joined_at=datetime.now(timezone.utc).isoformat(),
     )
     db.add(membership)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Same non-atomic-precheck race as invite_user_by_email above (e.g. a
+        # double-fired join request) — the unique constraint is the real
+        # guard, this just keeps the error response clean.
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already a member of this workspace")
 
     return workspace

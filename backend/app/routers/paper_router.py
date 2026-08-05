@@ -27,12 +27,11 @@ from app.models.workspace import Workspace
 from app.services.chat_service import get_history_grouped_by_date, get_or_create_paper_session, save_exchange
 from app.services.chunking_service import chunk_text
 from app.services.embedding_service import average_embedding, cosine_similarity, get_embedding, get_paper_embedding_source
-from app.services.faiss_service import add_paper_embedding, remove_paper_embedding
 from app.services.keyword_service import extract_keywords
 from app.services.llm_service import LlmError, call_vision_llm
 from app.services.paper_type_service import detect_paper_type
 from app.services.pdf_service import PdfExtractionError, extract_text, extract_title
-from app.services.qa_service import generate_grounded_answer, retrieve_relevant_chunks
+from app.services.qa_service import generate_grounded_answer, retrieve_relevant_chunks_pgvector
 from app.services.summary_service import generate_summary
 from app.services.visual_extraction_service import extract_visual_elements
 from app.utils.auth_dependency import get_current_user
@@ -250,7 +249,11 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             for section_reference, chunk_body in chunks:
                 text_block = TextBlock(paper_id=paper.id, text=chunk_body, section_reference=section_reference)
                 try:
-                    text_block.embedding = json.dumps(get_embedding(chunk_body))
+                    chunk_embedding = get_embedding(chunk_body)
+                    text_block.embedding = json.dumps(chunk_embedding)
+                    # Dual-write for the pgvector migration (Ask AI reads this
+                    # column now — see retrieve_relevant_chunks_pgvector).
+                    text_block.embedding_vector = chunk_embedding
                 except Exception as exc:
                     safe_log(f"[embedding_service] Failed to embed chunk '{section_reference}' for paper {paper.id}: {exc}")
                 db.add(text_block)
@@ -298,13 +301,17 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             if not _paper_still_exists(db, paper_id):
                 safe_log(f"[paper_router] Paper {paper_id} was deleted during background processing; stopping before saving embeddings/results")
                 db.rollback()
-                remove_paper_embedding(paper_id)
                 return
 
             try:
                 embedding_source = get_paper_embedding_source(paper.raw_text, chunks)
                 paper_embedding = get_embedding(embedding_source)
                 paper.embedding = json.dumps(paper_embedding)
+                # Dual-write for the pgvector migration (Similar Papers reads this
+                # column now — see get_project_similarity). `embedding` above
+                # remains the source of truth for every other feature until they
+                # migrate too.
+                paper.embedding_vector = paper_embedding
 
                 if project and project.topic_embedding:
                     topic_vector = json.loads(project.topic_embedding)
@@ -319,15 +326,12 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
                         if p.id != paper.id
                     ]
                     project.topic_embedding = json.dumps(average_embedding(other_embeddings + [paper_embedding]))
-
-                add_paper_embedding(paper.id, paper_embedding)
             except Exception as exc:
                 safe_log(f"[embedding_service] Failed to generate embedding for paper {paper.id}: {exc}")
 
         if not _paper_still_exists(db, paper_id):
             safe_log(f"[paper_router] Paper {paper_id} was deleted during background processing; stopping before visual element extraction")
             db.rollback()
-            remove_paper_embedding(paper_id)
             return
 
         try:
@@ -472,11 +476,6 @@ def delete_paper(
     db.delete(paper)
     db.commit()
 
-    try:
-        remove_paper_embedding(paper_id)
-    except Exception as exc:
-        safe_log(f"[paper_router] Failed to remove paper {paper_id} from FAISS index: {exc}")
-
 
 @router.get("/{paper_id}/download")
 def download_paper(
@@ -563,7 +562,7 @@ async def ask_question(
         save_exchange(session.id, payload.question, response.answer, db)
         return response
 
-    chunks = retrieve_relevant_chunks(payload.question, paper_id, db)
+    chunks = retrieve_relevant_chunks_pgvector(payload.question, paper_id, db)
     if not chunks:
         response = AskQuestionResponse(
             answer="This paper has no processed content to answer questions from yet.",

@@ -1,6 +1,9 @@
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, Column, Float, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
+
+EMBEDDING_VECTOR_DIMENSIONS = 384
 
 
 class Paper(Base):
@@ -84,6 +87,14 @@ class Paper(Base):
         nullable=True
     )
 
+    # pgvector migration (Phase A, infrastructure only): parallel column,
+    # backfilled from `embedding` but not yet read or written by any
+    # feature — every read/write path still goes through `embedding` above.
+    embedding_vector = Column(
+        Vector(EMBEDDING_VECTOR_DIMENSIONS),
+        nullable=True
+    )
+
     is_off_topic = Column(
         Boolean,
         nullable=False,
@@ -153,6 +164,12 @@ class TextBlock(Base):
 
     embedding = Column(
         String,
+        nullable=True
+    )
+
+    # pgvector migration (Phase A, infrastructure only): see Paper.embedding_vector.
+    embedding_vector = Column(
+        Vector(EMBEDDING_VECTOR_DIMENSIONS),
         nullable=True
     )
 

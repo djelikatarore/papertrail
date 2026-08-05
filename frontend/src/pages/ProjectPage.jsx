@@ -1,14 +1,16 @@
-import { FileText, PenTool, Search, Sparkles, Upload } from "lucide-react";
+import { FileText, MessageSquare, Network, Pencil, PenTool, Search, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
+import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import ErrorBanner from "../components/ErrorBanner";
 import ManageAccessPanel from "../components/ManageAccessPanel";
+import Modal from "../components/Modal";
 import PaginationControls from "../components/PaginationControls";
 import PaperCard from "../components/PaperCard";
 import UploadModal from "../components/UploadModal";
-import { listProjectPapers } from "../services/paperService";
-import { getProject } from "../services/projectService";
+import { deletePaper, listProjectPapers } from "../services/paperService";
+import { deleteProject, getProject, updateProject } from "../services/projectService";
 import { listWorkspaces } from "../services/workspaceService";
 
 const FILTERS = [
@@ -34,7 +36,75 @@ export default function ProjectPage() {
   const [filter, setFilter] = useState("ALL");
   const [showUpload, setShowUpload] = useState(false);
   const [showAccess, setShowAccess] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editTopic, setEditTopic] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState(null);
+  const [paperToDelete, setPaperToDelete] = useState(null);
+  const [deletingPaper, setDeletingPaper] = useState(false);
+  const [deletePaperError, setDeletePaperError] = useState(null);
   const pollRef = useRef(null);
+
+  async function handleDeleteProject() {
+    if (deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteProject(workspaceId, projectId);
+      navigate(`/workspaces/${workspaceId}`);
+    } catch {
+      setDeleteError("Could not delete this project. Please try again.");
+      setDeleting(false);
+    }
+  }
+
+  async function handleDeletePaper() {
+    if (deletingPaper || !paperToDelete) return;
+    setDeletingPaper(true);
+    setDeletePaperError(null);
+    try {
+      await deletePaper(paperToDelete.id);
+      setItems((prev) => prev.filter((p) => p.id !== paperToDelete.id));
+      setPaperToDelete(null);
+    } catch {
+      setDeletePaperError("Could not delete this paper. Please try again.");
+    } finally {
+      setDeletingPaper(false);
+    }
+  }
+
+  function openEditModal() {
+    setEditTitle(project?.title ?? "");
+    setEditTopic(project?.topic ?? "");
+    setEditDescription(project?.description ?? "");
+    setEditError(null);
+    setShowEditModal(true);
+  }
+
+  async function handleSaveEdit(event) {
+    event.preventDefault();
+    if (!editTitle.trim() || !editTopic.trim() || saving) return;
+    setSaving(true);
+    setEditError(null);
+    try {
+      const updated = await updateProject(workspaceId, projectId, {
+        title: editTitle.trim(),
+        topic: editTopic.trim(),
+        description: editDescription.trim() || null,
+      });
+      setProject(updated);
+      setShowEditModal(false);
+    } catch {
+      setEditError("Could not save these changes. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   useEffect(() => {
     getProject(workspaceId, projectId).then(setProject).catch(() => {});
@@ -93,38 +163,57 @@ export default function ProjectPage() {
       workspaceId={workspaceId}
       title={project?.title ?? "Paper Library"}
       subtitle={project?.topic}
-      onBack={() => navigate(`/workspaces/${workspaceId}`)}
     >
       <div className="p-10">
         <div className="mb-4 flex items-center justify-between">
-          <div />
-          <div className="flex gap-2.5">
+          <button
+            type="button"
+            onClick={openEditModal}
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-text"
+          >
+            <Pencil size={12} /> Edit project
+          </button>
+          <div className="flex flex-wrap justify-end gap-2.5">
             <button
               type="button"
               onClick={() => navigate(`/workspaces/${workspaceId}/projects/${projectId}/search`)}
-              className="flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-text"
+              className="btn-secondary shrink-0 whitespace-nowrap px-4 py-2"
             >
               <Search size={15} /> Find papers
             </button>
             <button
               type="button"
               onClick={() => navigate(`/workspaces/${workspaceId}/projects/${projectId}/drafts/review`)}
-              className="flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-text"
+              className="btn-secondary shrink-0 whitespace-nowrap px-4 py-2"
             >
               <PenTool size={15} /> Review drafts
             </button>
             <button
               type="button"
               onClick={() => navigate(`/workspaces/${workspaceId}/projects/${projectId}/drafts/generate`)}
-              className="flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-text"
+              className="btn-secondary shrink-0 whitespace-nowrap px-4 py-2"
             >
               <Sparkles size={15} /> Generate draft
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(`/workspaces/${workspaceId}/projects/${projectId}/chat`)}
+              className="btn-secondary shrink-0 whitespace-nowrap px-4 py-2"
+            >
+              <MessageSquare size={15} /> AI Chat
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(`/workspaces/${workspaceId}/projects/${projectId}/citation-graph`)}
+              className="btn-secondary shrink-0 whitespace-nowrap px-4 py-2"
+            >
+              <Network size={15} /> Citation Graph
             </button>
             {isOwner && (
               <button
                 type="button"
                 onClick={() => setShowAccess(true)}
-                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-text"
+                className="btn-secondary shrink-0 whitespace-nowrap px-4 py-2"
               >
                 Manage access
               </button>
@@ -132,10 +221,20 @@ export default function ProjectPage() {
             <button
               type="button"
               onClick={() => setShowUpload(true)}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white"
+              className="btn-primary shrink-0 whitespace-nowrap px-4 py-2"
             >
               <Upload size={15} /> Upload to project
             </button>
+            {isOwner && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                aria-label="Delete project"
+                className="shrink-0 rounded-xl border border-border p-2 text-red transition-colors hover:bg-red-light"
+              >
+                <Trash2 size={15} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -146,7 +245,7 @@ export default function ProjectPage() {
               type="button"
               onClick={() => setFilter(f.value)}
               className={`rounded-full px-3.5 py-1 text-xs font-semibold transition-colors ${
-                filter === f.value ? "bg-accent text-white" : "bg-accent-light text-accent"
+                filter === f.value ? "bg-accent text-white hover:bg-accent-dark" : "bg-accent-light text-accent"
               }`}
             >
               {f.label}
@@ -174,6 +273,7 @@ export default function ProjectPage() {
                 onClick={() =>
                   navigate(`/workspaces/${workspaceId}/projects/${projectId}/papers/${paper.id}`)
                 }
+                onDelete={isOwner ? setPaperToDelete : undefined}
               />
             ))}
           </div>
@@ -196,6 +296,84 @@ export default function ProjectPage() {
           workspaceId={workspaceId}
           projectId={projectId}
           onClose={() => setShowAccess(false)}
+        />
+      )}
+
+      {showEditModal && (
+        <Modal onClose={() => (saving ? null : setShowEditModal(false))}>
+          <h3 className="mb-6 pr-6 text-lg font-bold text-text">Edit project</h3>
+          <form onSubmit={handleSaveEdit} className="flex flex-col gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-text">Project name</label>
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                className="w-full rounded-lg border border-border px-3.5 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-text">Research topic</label>
+              <input
+                type="text"
+                value={editTopic}
+                onChange={(e) => setEditTopic(e.target.value)}
+                className="w-full rounded-lg border border-border px-3.5 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-text">Description</label>
+              <textarea
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                rows={3}
+                placeholder="Optional"
+                className="w-full resize-y rounded-lg border border-border px-3.5 py-2 text-sm"
+              />
+            </div>
+            {editError && <ErrorBanner message={editError} />}
+            <div className="mt-2 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowEditModal(false)}
+                disabled={saving}
+                className="btn-secondary flex-1 py-2.5"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!editTitle.trim() || !editTopic.trim() || saving}
+                className="btn-primary flex-1 py-2.5"
+              >
+                {saving ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {showDeleteConfirm && (
+        <ConfirmDeleteModal
+          title={`Delete "${project?.title}"?`}
+          description="This permanently deletes this project and everything in it — every paper, draft, review comment, and chat history. This cannot be undone."
+          confirmLabel="Delete project"
+          deleting={deleting}
+          error={deleteError}
+          onConfirm={handleDeleteProject}
+          onClose={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {paperToDelete && (
+        <ConfirmDeleteModal
+          title={`Delete "${paperToDelete.title ?? paperToDelete.filename}"?`}
+          description="This permanently deletes this paper and everything scoped to it — extracted text, figures, and its chat history. This cannot be undone."
+          confirmLabel="Delete paper"
+          deleting={deletingPaper}
+          error={deletePaperError}
+          onConfirm={handleDeletePaper}
+          onClose={() => setPaperToDelete(null)}
         />
       )}
     </AppShell>

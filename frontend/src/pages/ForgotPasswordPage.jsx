@@ -23,36 +23,32 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-app-bg">
-      <div className="w-full max-w-sm rounded-card bg-white p-8 shadow-card">
-        <h1 className="mb-6 text-xl font-semibold text-gray-900">Forgot password</h1>
+    <div className="flex min-h-screen items-center justify-center bg-app-bg p-8">
+      <div className="w-full max-w-sm rounded-[var(--radius-card-lg)] border border-border bg-card p-8 shadow-card">
+        <h1 className="mb-6 text-2xl font-bold tracking-tight text-text">Forgot password</h1>
 
         {message ? (
-          <p className="text-sm text-gray-600">{message}</p>
+          <p className="text-sm text-muted">{message}</p>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
+              <label className="mb-1 block text-sm font-semibold text-text">Email</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-xl border border-border px-3.5 py-2 text-sm outline-none transition-colors focus:border-accent"
               />
             </div>
 
-            <button
-              type="submit"
-              disabled={!email.trim() || submitting}
-              className="mt-2 rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
+            <button type="submit" disabled={!email.trim() || submitting} className="btn-primary mt-2 py-2.5">
               {submitting ? "Sending..." : "Send reset link"}
             </button>
           </form>
         )}
 
-        <p className="mt-4 text-center text-sm text-gray-500">
-          <Link to="/login" className="text-accent">
+        <p className="mt-5 text-center text-sm text-muted">
+          <Link to="/login" className="font-semibold text-accent">
             Back to log in
           </Link>
         </p>

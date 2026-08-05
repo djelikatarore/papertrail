@@ -42,60 +42,61 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-app-bg">
-      <div className="w-full max-w-sm rounded-card bg-white p-8 shadow-card">
-        <h1 className="mb-6 text-xl font-semibold text-gray-900">Reset password</h1>
+    <div className="flex min-h-screen items-center justify-center bg-app-bg p-8">
+      <div className="w-full max-w-sm rounded-[var(--radius-card-lg)] border border-border bg-card p-8 shadow-card">
+        <h1 className="mb-6 text-2xl font-bold tracking-tight text-text">Reset password</h1>
 
         {done ? (
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-muted">
             Password updated. Redirecting to login...
           </p>
         ) : !token ? (
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-red">
             No reset token found in the link. Please use the link from your email.
           </p>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
+              <label className="mb-1 block text-sm font-semibold text-text">
                 New password
               </label>
-              <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} />
-              {passwordError && <p className="mt-1 text-xs text-red-600">{passwordError}</p>}
+              <PasswordInput
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="rounded-xl border-border focus:border-accent"
+              />
+              {passwordError && <p className="mt-1 text-xs text-red">{passwordError}</p>}
               {!passwordError && passwordAtMax && (
-                <p className="mt-1 text-xs text-gray-500">Maximum 12 characters reached</p>
+                <p className="mt-1 text-xs text-muted">Maximum 12 characters reached</p>
               )}
               <PasswordStrengthIndicator password={password} />
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
+              <label className="mb-1 block text-sm font-semibold text-text">
                 Confirm new password
               </label>
               <PasswordInput
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
+                className="rounded-xl border-border focus:border-accent"
               />
-              {confirmError && <p className="mt-1 text-xs text-red-600">{confirmError}</p>}
+              {confirmError && <p className="mt-1 text-xs text-red">{confirmError}</p>}
               {!confirmError && confirmAtMax && (
-                <p className="mt-1 text-xs text-gray-500">Maximum 12 characters reached</p>
+                <p className="mt-1 text-xs text-muted">Maximum 12 characters reached</p>
               )}
             </div>
 
-            {submitError && <p className="text-sm text-red-600">{submitError}</p>}
+            {submitError && <p className="text-sm text-red">{submitError}</p>}
 
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="mt-2 rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
+            <button type="submit" disabled={!canSubmit} className="btn-primary mt-2 py-2.5">
               {submitting ? "Resetting..." : "Reset password"}
             </button>
           </form>
         )}
 
-        <p className="mt-4 text-center text-sm text-gray-500">
-          <Link to="/login" className="text-accent">
+        <p className="mt-5 text-center text-sm text-muted">
+          <Link to="/login" className="font-semibold text-accent">
             Back to log in
           </Link>
         </p>

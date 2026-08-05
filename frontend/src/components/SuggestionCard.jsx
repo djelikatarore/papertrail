@@ -1,4 +1,4 @@
-import { Check, X } from "lucide-react";
+import { Check, Trash2, X } from "lucide-react";
 
 const STATUS_STYLES = {
   OPEN: { bg: "bg-amber-light", text: "text-amber", label: "Pending" },
@@ -11,7 +11,16 @@ const STATUS_STYLES = {
 // default, but accepts optional `original`/`suggested`/`reason` props so a
 // richer diff view can be dropped in later without changing the list/page
 // that renders these cards.
-export default function SuggestionCard({ comment, onAccept, onDismiss, original, suggested, reason }) {
+export default function SuggestionCard({
+  comment,
+  onAccept,
+  onDismiss,
+  onDelete,
+  canDelete,
+  original,
+  suggested,
+  reason,
+}) {
   const style = STATUS_STYLES[comment.status] ?? STATUS_STYLES.OPEN;
   const isPending = comment.status === "OPEN";
   const hasDiff = original != null && suggested != null;
@@ -26,24 +35,37 @@ export default function SuggestionCard({ comment, onAccept, onDismiss, original,
         <span className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${style.bg} ${style.text}`}>
           {style.label}
         </span>
-        {isPending ? (
-          <div className="flex gap-1.5">
+        <div className="flex items-center gap-1.5">
+          {isPending && (
+            <>
+              <button
+                type="button"
+                onClick={() => onAccept(comment)}
+                title="Marks this suggestion as reviewed — it does not edit the draft. Use the Edit button to change the draft content."
+                className="flex items-center gap-1 rounded-md bg-green-light px-2.5 py-1 text-xs font-semibold text-green"
+              >
+                <Check size={11} /> Accept
+              </button>
+              <button
+                type="button"
+                onClick={() => onDismiss(comment)}
+                className="flex items-center gap-1 rounded-md bg-border px-2.5 py-1 text-xs font-semibold text-muted"
+              >
+                <X size={11} /> Dismiss
+              </button>
+            </>
+          )}
+          {canDelete && (
             <button
               type="button"
-              onClick={() => onAccept(comment)}
-              className="flex items-center gap-1 rounded-md bg-green-light px-2.5 py-1 text-xs font-semibold text-green"
+              onClick={() => onDelete(comment)}
+              aria-label="Delete comment"
+              className="rounded-md p-1.5 text-muted hover:bg-red-light hover:text-red"
             >
-              <Check size={11} /> Accept
+              <Trash2 size={12} />
             </button>
-            <button
-              type="button"
-              onClick={() => onDismiss(comment)}
-              className="flex items-center gap-1 rounded-md bg-border px-2.5 py-1 text-xs font-semibold text-muted"
-            >
-              <X size={11} /> Dismiss
-            </button>
-          </div>
-        ) : null}
+          )}
+        </div>
       </div>
       <div className="px-4 py-3.5">
         {hasDiff ? (

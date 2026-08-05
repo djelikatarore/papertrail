@@ -1,10 +1,9 @@
-import json
 import re
 
 from sqlalchemy.orm import Session
 
 from app.models.models import TextBlock
-from app.services.embedding_service import cosine_similarity, get_embedding
+from app.services.embedding_service import get_embedding
 from app.services.llm_service import call_llm
 from app.services.summary_service import _extract_citation, _verify_citation
 from app.utils.logging_utils import safe_log
@@ -17,25 +16,26 @@ QA_SYSTEM_PROMPT = (
 )
 
 
-def retrieve_relevant_chunks(question: str, paper_id: int, db: Session, top_k: int = TOP_K_CHUNKS) -> list[dict]:
-    """Embeds the question and ranks the paper's TextBlocks by cosine similarity.
-    Chunk embeddings are precomputed at upload time (TextBlock.embedding) rather
-    than recomputed on every question, to keep per-question latency low."""
+def retrieve_relevant_chunks_pgvector(question: str, paper_id: int, db: Session, top_k: int = TOP_K_CHUNKS) -> list[dict]:
+    """Embeds the question and ranks the paper's TextBlocks by cosine distance
+    (pgvector's <=> operator) — PostgreSQL does both the ranking and the top-k
+    cut via ORDER BY ... LIMIT, rather than loading every chunk and sorting in
+    Python."""
     question_embedding = get_embedding(question)
 
-    chunks = db.query(TextBlock).filter(TextBlock.paper_id == paper_id, TextBlock.embedding.isnot(None)).all()
+    distance = TextBlock.embedding_vector.cosine_distance(question_embedding)
+    rows = (
+        db.query(TextBlock.section_reference, TextBlock.text, distance.label("distance"))
+        .filter(TextBlock.paper_id == paper_id, TextBlock.embedding_vector.isnot(None))
+        .order_by(distance)
+        .limit(top_k)
+        .all()
+    )
 
-    scored = [
-        {
-            "section_reference": chunk.section_reference,
-            "text": chunk.text,
-            "score": cosine_similarity(question_embedding, json.loads(chunk.embedding)),
-        }
-        for chunk in chunks
+    return [
+        {"section_reference": row.section_reference, "text": row.text, "score": 1 - row.distance}
+        for row in rows
     ]
-    scored.sort(key=lambda c: c["score"], reverse=True)
-
-    return scored[:top_k]
 
 
 def retrieve_relevant_chunks_multi(
@@ -46,7 +46,7 @@ def retrieve_relevant_chunks_multi(
     and taking a global top-k) so that every paper gets a chance to contribute its
     own best-matching content to a comparative answer, instead of one paper with
     generally higher-scoring chunks crowding out the others."""
-    return {paper_id: retrieve_relevant_chunks(question, paper_id, db, top_k) for paper_id in paper_ids}
+    return {paper_id: retrieve_relevant_chunks_pgvector(question, paper_id, db, top_k) for paper_id in paper_ids}
 
 
 def _build_qa_prompt(question: str, chunks: list[dict]) -> str:
