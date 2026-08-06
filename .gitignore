@@ -16,6 +16,9 @@ backend/faiss_index.bin
 backend/backups/
 backend/*.db.backup*
 
+# Local dev server logs
+*.log
+
 # Environment variables
 .env
 

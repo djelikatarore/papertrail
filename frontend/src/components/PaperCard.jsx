@@ -30,11 +30,11 @@ export default function PaperCard({ paper, onClick, selected, onDelete }) {
             }
           : undefined
       }
-      className={`cursor-pointer rounded-[var(--radius-card-lg)] border bg-card p-5 shadow-card transition-shadow hover:shadow-card-hover ${
+      className={`cursor-pointer overflow-hidden rounded-[var(--radius-card-lg)] border bg-card p-5 shadow-card transition-shadow hover:shadow-card-hover ${
         isSelectable && selected ? "border-accent ring-1 ring-accent" : "border-border"
       }`}
     >
-      <div className="mb-2.5 flex items-start justify-between gap-3">
+      <div className="mb-2.5 flex items-start gap-3">
         {isSelectable && (
           <span
             className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded ${
@@ -44,24 +44,31 @@ export default function PaperCard({ paper, onClick, selected, onDelete }) {
             {selected && <Check size={11} strokeWidth={3} />}
           </span>
         )}
-        <p className="flex-1 text-sm font-semibold leading-snug text-text">{displayTitle}</p>
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-          <StatusPill status={paper.status} />
-          <ReviewTypeBadge reviewType={paper.review_type} />
-          <PaperTypeBadge detectedPaperType={paper.detected_paper_type} />
-          {onDelete && (
-            <button
-              type="button"
-              aria-label="Delete paper"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(paper);
-              }}
-              className="rounded-md p-1 text-muted transition-colors hover:bg-red-light hover:text-red"
-            >
-              <Trash2 size={14} />
-            </button>
-          )}
+        {/* Title and badges stack vertically rather than sharing a row — a
+            long title plus 2-3 badges don't reliably fit side by side in a
+            narrow container (e.g. the 260px picker sidebar on Draft
+            Generation/Comparative Chat), which used to force the row wider
+            than its card and visually overflow into whatever was next to it. */}
+        <div className="min-w-0 flex-1">
+          <p className="break-words text-sm font-semibold leading-snug text-text">{displayTitle}</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <StatusPill status={paper.status} />
+            <ReviewTypeBadge reviewType={paper.review_type} />
+            <PaperTypeBadge detectedPaperType={paper.detected_paper_type} />
+            {onDelete && (
+              <button
+                type="button"
+                aria-label="Delete paper"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(paper);
+                }}
+                className="rounded-md p-1 text-muted transition-colors hover:bg-red-light hover:text-red"
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
       {paper.status === "ERROR" && paper.error_message && (

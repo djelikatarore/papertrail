@@ -98,7 +98,7 @@ export default function Sidebar({ workspaceId }) {
         </button>
       </div>
 
-      <nav className="flex-1 overflow-auto px-3 pb-3 pt-2">
+      <nav className="no-scrollbar flex-1 overflow-auto px-3 pb-3 pt-2">
         {sections.map((section) => (
           <div key={section.label} className="mb-6">
             <p className="mb-1.5 ml-2 text-[10px] font-bold uppercase tracking-wider text-white/22">

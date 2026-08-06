@@ -70,7 +70,7 @@ export default function DraftGenerationPage() {
       subtitle="Generate a structured draft from your project's papers"
     >
       <div className="grid grid-cols-1 gap-6 p-10 md:grid-cols-[260px_1fr]">
-        <div className="h-fit rounded-[var(--radius-card-lg)] border border-border bg-card p-5 shadow-card md:sticky md:top-5">
+        <div className="h-fit min-w-0 rounded-[var(--radius-card-lg)] border border-border bg-card p-5 shadow-card md:sticky md:top-5">
           <p className="mb-3.5 text-sm font-bold text-text">Document type</p>
           <select
             value={documentType}
@@ -127,7 +127,7 @@ export default function DraftGenerationPage() {
           )}
         </div>
 
-        <div>
+        <div className="min-w-0">
           {error && (
             <div className="mb-5">
               <ErrorBanner message={error} />
@@ -157,7 +157,7 @@ export default function DraftGenerationPage() {
             <div className="flex flex-col gap-4">
               <div className="rounded-[var(--radius-card-lg)] border border-border bg-card p-5 shadow-card">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-lg font-bold text-text">{draft.title}</h2>
+                  <h2 className="min-w-0 break-words text-lg font-bold text-text">{draft.title}</h2>
                   <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                     <span className="rounded-full bg-accent-light px-2 py-0.5 text-[11px] font-semibold text-accent">
                       {DOCUMENT_TYPE_LABELS[draft.document_type] ?? draft.document_type}
@@ -191,7 +191,7 @@ export default function DraftGenerationPage() {
                       <h3 className="text-sm font-bold text-text">{section.title}</h3>
                     </div>
                   )}
-                  <div className="whitespace-pre-wrap px-5 py-4 text-[13.5px] leading-relaxed text-text">
+                  <div className="whitespace-pre-wrap break-words px-5 py-4 text-[13.5px] leading-relaxed text-text">
                     {section.body}
                   </div>
                 </div>

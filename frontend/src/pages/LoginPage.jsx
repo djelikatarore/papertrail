@@ -140,7 +140,7 @@ export default function LoginPage() {
                   setSessionExpired(false);
                   setError(null);
                 }}
-                placeholder="you@university.edu"
+                placeholder="you@example.com"
                 className="w-full rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-text shadow-card outline-none transition-colors focus:border-accent"
               />
             </div>

@@ -6,6 +6,7 @@ import AuthenticatedImage from "../components/AuthenticatedImage";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import ErrorBanner from "../components/ErrorBanner";
 import NonAcademicWarningBanner from "../components/NonAcademicWarningBanner";
+import NonAcademicWarningModal from "../components/NonAcademicWarningModal";
 import PaperTypeBadge from "../components/PaperTypeBadge";
 import ReviewTypeBadge from "../components/ReviewTypeBadge";
 import SimilarityPanel from "../components/SimilarityPanel";
@@ -62,9 +63,13 @@ export default function PaperDetailsPage() {
   const [downloadError, setDownloadError] = useState(null);
   const [summaryTab, setSummaryTab] = useState(SUMMARY_TABS[0].key);
   const [isOwner, setIsOwner] = useState(false);
+  const [ownerCheckFailed, setOwnerCheckFailed] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [warningDeleting, setWarningDeleting] = useState(false);
+  const [warningDeleteError, setWarningDeleteError] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -84,14 +89,25 @@ export default function PaperDetailsPage() {
       })
       .catch(() => setError("Could not load this paper. Please try again."))
       .finally(() => setLoading(false));
+    setOwnerCheckFailed(false);
     listWorkspaces()
       .then((workspaces) => {
         const current = workspaces.find((w) => w.id === Number(workspaceId));
         setIsOwner(current?.role === "OWNER");
       })
-      .catch(() => {});
+      .catch(() => setOwnerCheckFailed(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, projectId, paperId]);
+
+  // Shown once per paper — "Keep it anyway" (or the modal's own close button)
+  // marks it seen in localStorage so it doesn't nag again on a later visit.
+  // Owner-only: the modal's real choice is "delete or not", which a
+  // non-owner can't do anyway (same gating as the Trash2 button below).
+  useEffect(() => {
+    if (!paper?.content_warning || !isOwner) return;
+    if (localStorage.getItem(`paperWarningSeen_${paperId}`) === "true") return;
+    setShowWarningModal(true);
+  }, [paper, isOwner, paperId]);
 
   if (loading) {
     return (
@@ -139,6 +155,24 @@ export default function PaperDetailsPage() {
     } catch {
       setDeleteError("Could not delete this paper. Please try again.");
       setDeleting(false);
+    }
+  }
+
+  function handleKeepWarning() {
+    localStorage.setItem(`paperWarningSeen_${paperId}`, "true");
+    setShowWarningModal(false);
+  }
+
+  async function handleDeleteFromWarning() {
+    if (warningDeleting) return;
+    setWarningDeleting(true);
+    setWarningDeleteError(null);
+    try {
+      await deletePaper(paperId);
+      navigate(`/workspaces/${workspaceId}/projects/${projectId}`);
+    } catch {
+      setWarningDeleteError("Could not delete this paper. Please try again.");
+      setWarningDeleting(false);
     }
   }
 
@@ -284,6 +318,12 @@ export default function PaperDetailsPage() {
           </div>
         )}
 
+        {ownerCheckFailed && (
+          <div className="mb-6">
+            <ErrorBanner message="Couldn't verify your permissions on this workspace — owner-only actions (like deleting this paper) may not appear until you reload the page." />
+          </div>
+        )}
+
         {showQa && (
           <div className="mb-6 overflow-hidden rounded-[var(--radius-card-lg)] border border-border bg-card shadow-card">
             <div className="border-b border-border px-6 py-4">
@@ -365,6 +405,15 @@ export default function PaperDetailsPage() {
           error={deleteError}
           onConfirm={handleDeletePaper}
           onClose={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {showWarningModal && (
+        <NonAcademicWarningModal
+          onKeep={handleKeepWarning}
+          onDelete={handleDeleteFromWarning}
+          deleting={warningDeleting}
+          error={warningDeleteError}
         />
       )}
     </AppShell>

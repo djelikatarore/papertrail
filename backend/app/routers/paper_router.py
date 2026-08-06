@@ -266,7 +266,7 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             # isolated (matches the original per-call try/except behavior) rather
             # than one failure cancelling the other two in-flight calls.
             summary_result, keywords_result, paper_type_result = await asyncio.gather(
-                generate_summary(chunks),
+                generate_summary(chunks, paper.review_type),
                 extract_keywords(chunks),
                 detect_paper_type(chunks),
                 return_exceptions=True,

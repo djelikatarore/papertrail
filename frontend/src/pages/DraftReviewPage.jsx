@@ -434,7 +434,7 @@ export default function DraftReviewPage() {
                       {section.title && (
                         <p className="mb-1 text-xs font-bold text-text">{section.title}</p>
                       )}
-                      <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-text">
+                      <p className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-text">
                         {section.body}
                       </p>
                     </div>

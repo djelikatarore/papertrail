@@ -22,3 +22,19 @@ export function clearToken() {
   currentToken = null;
   localStorage.removeItem(STORAGE_KEY);
 }
+
+// Fires when a DIFFERENT tab/window changes the token in localStorage (login,
+// logout, or switching accounts there) — the same-tab setToken/clearToken
+// calls above don't trigger the browser's `storage` event at all, only other
+// tabs do. Without this, a tab left open through another tab's logout keeps
+// its in-memory `currentToken` (and therefore every request it makes) on the
+// old session indefinitely, even though the user believes they're logged out.
+export function onTokenChangedExternally(callback) {
+  function handleStorage(event) {
+    if (event.key !== STORAGE_KEY) return;
+    currentToken = event.newValue;
+    callback(event.newValue);
+  }
+  window.addEventListener("storage", handleStorage);
+  return () => window.removeEventListener("storage", handleStorage);
+}

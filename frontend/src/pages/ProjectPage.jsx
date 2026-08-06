@@ -28,6 +28,7 @@ export default function ProjectPage() {
 
   const [project, setProject] = useState(null);
   const [isOwner, setIsOwner] = useState(false);
+  const [ownerCheckFailed, setOwnerCheckFailed] = useState(false);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -108,12 +109,13 @@ export default function ProjectPage() {
 
   useEffect(() => {
     getProject(workspaceId, projectId).then(setProject).catch(() => {});
+    setOwnerCheckFailed(false);
     listWorkspaces()
       .then((workspaces) => {
         const current = workspaces.find((w) => w.id === Number(workspaceId));
         setIsOwner(current?.role === "OWNER");
       })
-      .catch(() => {});
+      .catch(() => setOwnerCheckFailed(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, projectId]);
 
@@ -256,6 +258,12 @@ export default function ProjectPage() {
         {error && (
           <div className="mb-6">
             <ErrorBanner message={error} />
+          </div>
+        )}
+
+        {ownerCheckFailed && (
+          <div className="mb-6">
+            <ErrorBanner message="Couldn't verify your permissions on this workspace — owner-only actions (like deleting a paper or the project) may not appear until you reload the page." />
           </div>
         )}
 

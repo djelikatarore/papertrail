@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { getCurrentUser } from "../services/authService";
-import { getToken, setToken as setStoredToken, clearToken } from "../services/tokenStore";
+import { getToken, setToken as setStoredToken, clearToken, onTokenChangedExternally } from "../services/tokenStore";
 
 const AuthContext = createContext(null);
 
@@ -51,6 +51,35 @@ export function AuthProvider({ children }) {
     // Only re-run on a real token change (e.g. login()/logout()), not on
     // every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keeps this tab's state in sync when login/logout happens in ANOTHER tab
+  // (see the comment on onTokenChangedExternally) — without this, a tab left
+  // open elsewhere silently keeps acting as the old session indefinitely.
+  useEffect(() => {
+    return onTokenChangedExternally((newToken) => {
+      if (!newToken) {
+        loggingOutRef.current = true;
+        setToken(null);
+        setUser(null);
+        return;
+      }
+      loggingOutRef.current = false;
+      setToken(newToken);
+      getCurrentUser()
+        .then((fetchedUser) => {
+          if (getToken() === newToken) {
+            setUser(fetchedUser);
+          }
+        })
+        .catch(() => {
+          if (getToken() === newToken) {
+            clearToken();
+            setToken(null);
+            setUser(null);
+          }
+        });
+    });
   }, []);
 
   function login(newToken, newUser) {
