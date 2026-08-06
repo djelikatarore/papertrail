@@ -1,6 +1,8 @@
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
+from app.models.models import EMBEDDING_VECTOR_DIMENSIONS
 
 
 class Project(Base):
@@ -13,6 +15,12 @@ class Project(Base):
     topic = Column(String, nullable=False)
 
     topic_embedding = Column(String, nullable=True)
+
+    # pgvector migration (Phase A, infrastructure only): see Paper.embedding_vector.
+    topic_embedding_vector = Column(
+        Vector(EMBEDDING_VECTOR_DIMENSIONS),
+        nullable=True
+    )
 
     description = Column(String, nullable=True)
 

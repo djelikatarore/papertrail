@@ -10,6 +10,11 @@ JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 if not JWT_SECRET_KEY:
     raise RuntimeError("JWT_SECRET_KEY is not set in .env")
 
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set in .env")
+
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 GMAIL_SMTP_HOST = "smtp.gmail.com"
@@ -50,8 +55,6 @@ DRAFT_PDF_FOOTER_TEXT = "Generated from PaperTrail draft"
 # subfield scored ~0.52-0.73 cosine similarity; unrelated domains scored ~0.02-0.08.
 # 0.30 sits comfortably in the gap between the two clusters.
 OFF_TOPIC_SIMILARITY_THRESHOLD = float(os.getenv("OFF_TOPIC_SIMILARITY_THRESHOLD", "0.30"))
-
-FAISS_INDEX_PATH = os.getenv("FAISS_INDEX_PATH", "faiss_index.bin")
 
 # Empirically determined (Sprint 6, Task 4): question-vs-chunk cosine similarity for
 # genuinely answerable questions about the "Attention Is All You Need" test paper

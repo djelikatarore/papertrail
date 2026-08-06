@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config.settings import FRONTEND_URL, VALID_REVIEW_TYPES
@@ -35,6 +36,24 @@ class WorkspaceResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class WorkspaceSummaryResponse(BaseModel):
+    id: int
+    name: str
+    description: str | None
+    owner_id: int
+    created_at: str | None
+    role: str
+
+
+class WorkspaceMemberDetailResponse(BaseModel):
+    id: int
+    user_id: int
+    full_name: str
+    email: str
+    role: str
+    joined_at: str | None
 
 
 class InviteLinkResponse(BaseModel):
@@ -118,6 +137,63 @@ def create_workspace(
     return workspace
 
 
+@router.get("", response_model=list[WorkspaceSummaryResponse])
+def list_workspaces(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Workspaces the current user belongs to, owner or member alike — there was
+    previously no way to discover a user's own workspaces at all, only to create
+    one or join by invite link/email."""
+    memberships = db.query(WorkspaceMember).filter(WorkspaceMember.user_id == current_user.id).all()
+    workspaces_by_id = {
+        w.id: w
+        for w in db.query(Workspace).filter(Workspace.id.in_([m.workspace_id for m in memberships])).all()
+    }
+
+    return [
+        WorkspaceSummaryResponse(
+            id=w.id,
+            name=w.name,
+            description=w.description,
+            owner_id=w.owner_id,
+            created_at=w.created_at,
+            role=m.role,
+        )
+        for m in memberships
+        if (w := workspaces_by_id.get(m.workspace_id)) is not None
+    ]
+
+
+@router.get("/{workspace_id}/members", response_model=list[WorkspaceMemberDetailResponse])
+def list_workspace_members(
+    workspace_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Any member can view the roster (matches list_projects' access scoping) —
+    only mutating a project's per-member access is restricted to the owner,
+    via the existing PATCH .../projects/{id}/access."""
+    get_workspace_or_404(workspace_id, db)
+    require_member(workspace_id, current_user.id, db)
+
+    memberships = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == workspace_id).all()
+    users_by_id = {u.id: u for u in db.query(User).filter(User.id.in_([m.user_id for m in memberships])).all()}
+
+    return [
+        WorkspaceMemberDetailResponse(
+            id=m.id,
+            user_id=m.user_id,
+            full_name=user.full_name,
+            email=user.email,
+            role=m.role,
+            joined_at=m.joined_at,
+        )
+        for m in memberships
+        if (user := users_by_id.get(m.user_id)) is not None
+    ]
+
+
 @router.post(
     "/{workspace_id}/invite",
     response_model=WorkspaceMemberResponse,
@@ -162,7 +238,15 @@ def invite_user_by_email(
         joined_at=datetime.now(timezone.utc).isoformat(),
     )
     db.add(membership)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # The pre-check above isn't atomic — two concurrent invites for the
+        # same email can both pass it before either commits. The DB-level
+        # unique constraint (workspace_id, user_id) is the real guard; this
+        # just turns its violation into the same clean 409 instead of a raw 500.
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User is already a member of this workspace")
     db.refresh(membership)
 
     return membership
@@ -288,6 +372,13 @@ def join_workspace_by_link(
         joined_at=datetime.now(timezone.utc).isoformat(),
     )
     db.add(membership)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Same non-atomic-precheck race as invite_user_by_email above (e.g. a
+        # double-fired join request) — the unique constraint is the real
+        # guard, this just keeps the error response clean.
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already a member of this workspace")
 
     return workspace

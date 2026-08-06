@@ -18,19 +18,20 @@ from app.config.settings import (
     VISUAL_ELEMENTS_DIR,
 )
 from app.database import SessionLocal, get_db
+from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
 from app.models.models import Paper, TextBlock, VisualElement
 from app.models.project import Project
 from app.models.user import User
+from app.models.workspace import Workspace
 from app.services.chat_service import get_history_grouped_by_date, get_or_create_paper_session, save_exchange
 from app.services.chunking_service import chunk_text
 from app.services.embedding_service import average_embedding, cosine_similarity, get_embedding, get_paper_embedding_source
-from app.services.faiss_service import add_paper_embedding
 from app.services.keyword_service import extract_keywords
 from app.services.llm_service import LlmError, call_vision_llm
 from app.services.paper_type_service import detect_paper_type
 from app.services.pdf_service import PdfExtractionError, extract_text, extract_title
-from app.services.qa_service import generate_grounded_answer, retrieve_relevant_chunks
+from app.services.qa_service import generate_grounded_answer, retrieve_relevant_chunks_pgvector
 from app.services.summary_service import generate_summary
 from app.services.visual_extraction_service import extract_visual_elements
 from app.utils.auth_dependency import get_current_user
@@ -209,6 +210,13 @@ async def upload_paper(
     return paper
 
 
+def _paper_still_exists(db: Session, paper_id: int) -> bool:
+    """Re-checks the actual DB state (not the session's identity map) — used to
+    detect a paper deleted by a concurrent request while this background task
+    was mid-flight (e.g. still waiting on an LLM call)."""
+    return db.query(Paper.id).filter(Paper.id == paper_id).first() is not None
+
+
 async def _process_paper_background(paper_id: int, file_path: str, project_id: int) -> None:
     """Runs after the upload response has already been sent to the client (FastAPI
     BackgroundTasks execute post-response). Opens its own DB session — the
@@ -241,7 +249,11 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             for section_reference, chunk_body in chunks:
                 text_block = TextBlock(paper_id=paper.id, text=chunk_body, section_reference=section_reference)
                 try:
-                    text_block.embedding = json.dumps(get_embedding(chunk_body))
+                    chunk_embedding = get_embedding(chunk_body)
+                    text_block.embedding = json.dumps(chunk_embedding)
+                    # Dual-write for the pgvector migration (Ask AI reads this
+                    # column now — see retrieve_relevant_chunks_pgvector).
+                    text_block.embedding_vector = chunk_embedding
                 except Exception as exc:
                     safe_log(f"[embedding_service] Failed to embed chunk '{section_reference}' for paper {paper.id}: {exc}")
                 db.add(text_block)
@@ -254,7 +266,7 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             # isolated (matches the original per-call try/except behavior) rather
             # than one failure cancelling the other two in-flight calls.
             summary_result, keywords_result, paper_type_result = await asyncio.gather(
-                generate_summary(chunks),
+                generate_summary(chunks, paper.review_type),
                 extract_keywords(chunks),
                 detect_paper_type(chunks),
                 return_exceptions=True,
@@ -286,10 +298,20 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             else:
                 paper.detected_paper_type, paper.content_warning = paper_type_result
 
+            if not _paper_still_exists(db, paper_id):
+                safe_log(f"[paper_router] Paper {paper_id} was deleted during background processing; stopping before saving embeddings/results")
+                db.rollback()
+                return
+
             try:
                 embedding_source = get_paper_embedding_source(paper.raw_text, chunks)
                 paper_embedding = get_embedding(embedding_source)
                 paper.embedding = json.dumps(paper_embedding)
+                # Dual-write for the pgvector migration (Similar Papers reads this
+                # column now — see get_project_similarity). `embedding` above
+                # remains the source of truth for every other feature until they
+                # migrate too.
+                paper.embedding_vector = paper_embedding
 
                 if project and project.topic_embedding:
                     topic_vector = json.loads(project.topic_embedding)
@@ -304,10 +326,13 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
                         if p.id != paper.id
                     ]
                     project.topic_embedding = json.dumps(average_embedding(other_embeddings + [paper_embedding]))
-
-                add_paper_embedding(paper.id, paper_embedding)
             except Exception as exc:
                 safe_log(f"[embedding_service] Failed to generate embedding for paper {paper.id}: {exc}")
+
+        if not _paper_still_exists(db, paper_id):
+            safe_log(f"[paper_router] Paper {paper_id} was deleted during background processing; stopping before visual element extraction")
+            db.rollback()
+            return
 
         try:
             os.makedirs(VISUAL_ELEMENTS_DIR, exist_ok=True)
@@ -401,6 +426,57 @@ def get_paper(
     return _get_paper_with_access(paper_id, db, current_user)
 
 
+def _delete_file_if_exists(path: str | None) -> None:
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError as exc:
+            safe_log(f"[paper_router] Failed to delete file {path}: {exc}")
+
+
+@router.delete("/{paper_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_paper(
+    paper_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Deletes a single paper and everything scoped to it: text_blocks,
+    visual_elements (+ their image files on disk), this paper's chat session
+    and messages, and the uploaded PDF file. Same cascade pattern and
+    owner-only restriction as DELETE /projects/{id} and DELETE .../drafts/{id}.
+    Drafts and project-level (comparative) chat history are untouched — neither
+    has a direct foreign key to a single paper."""
+    paper = _get_paper_with_access(paper_id, db, current_user)
+    project = db.query(Project).filter(Project.id == paper.project_id).first()
+    workspace = db.query(Workspace).filter(Workspace.id == project.workspace_id).first()
+
+    if workspace.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workspace owner can delete a paper",
+        )
+
+    visual_element_paths = [
+        path for (path,) in db.query(VisualElement.image_path).filter(VisualElement.paper_id == paper_id).all()
+    ]
+    for path in visual_element_paths:
+        _delete_file_if_exists(path)
+    db.query(VisualElement).filter(VisualElement.paper_id == paper_id).delete(synchronize_session=False)
+    db.query(TextBlock).filter(TextBlock.paper_id == paper_id).delete(synchronize_session=False)
+
+    chat_session_ids = [
+        sid for (sid,) in db.query(ChatSession.id).filter(ChatSession.paper_id == paper_id).all()
+    ]
+    if chat_session_ids:
+        db.query(ChatMessage).filter(ChatMessage.session_id.in_(chat_session_ids)).delete(synchronize_session=False)
+        db.query(ChatSession).filter(ChatSession.id.in_(chat_session_ids)).delete(synchronize_session=False)
+
+    _delete_file_if_exists(os.path.join(UPLOAD_DIR, f"{paper_id}.pdf"))
+
+    db.delete(paper)
+    db.commit()
+
+
 @router.get("/{paper_id}/download")
 def download_paper(
     paper_id: int,
@@ -421,6 +497,34 @@ def download_paper(
         media_type="application/pdf",
         filename=paper.filename or f"{paper_id}.pdf",
     )
+
+
+@router.get("/{paper_id}/visual-elements/{visual_element_id}/image")
+def download_visual_element_image(
+    paper_id: int,
+    visual_element_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Serves the actual image bytes for a figure extracted at upload time.
+    VisualElement only ever stored a server-side disk path (image_path) — there
+    was no way for a client to actually fetch the image itself."""
+    _get_paper_with_access(paper_id, db, current_user)
+
+    visual_element = (
+        db.query(VisualElement)
+        .filter(VisualElement.id == visual_element_id, VisualElement.paper_id == paper_id)
+        .first()
+    )
+    if not visual_element:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visual element not found")
+
+    if not visual_element.image_path or not os.path.exists(visual_element.image_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image file not found on disk")
+
+    ext = visual_element.image_path.rsplit(".", 1)[-1].lower()
+    media_type = "image/png" if ext == "png" else "image/jpeg"
+    return FileResponse(visual_element.image_path, media_type=media_type)
 
 
 @router.post("/{paper_id}/ask", response_model=AskQuestionResponse)
@@ -458,7 +562,7 @@ async def ask_question(
         save_exchange(session.id, payload.question, response.answer, db)
         return response
 
-    chunks = retrieve_relevant_chunks(payload.question, paper_id, db)
+    chunks = retrieve_relevant_chunks_pgvector(payload.question, paper_id, db)
     if not chunks:
         response = AskQuestionResponse(
             answer="This paper has no processed content to answer questions from yet.",

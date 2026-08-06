@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app.database import Base, engine
 
@@ -20,10 +21,21 @@ from app.routers.draft_router import router as draft_router
 from app.routers.paper_router import router as paper_router
 from app.routers.project_router import router as project_router
 from app.routers.workspace_router import router as workspace_router
-from app.services.faiss_service import load_index
 from app.utils.logging_utils import safe_log
 
 Base.metadata.create_all(bind=engine)
+
+# create_all only creates missing tables — it never alters an existing one, so
+# the UniqueConstraint added to WorkspaceMember.__table_args__ has no effect on
+# a database that already has this table. This index enforces the same
+# constraint (SQLite raises the same IntegrityError on either) without a full
+# migration framework, and is safe to run on every startup.
+with engine.connect() as conn:
+    conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_workspace_member_workspace_user "
+        "ON workspace_members (workspace_id, user_id)"
+    ))
+    conn.commit()
 
 app = FastAPI(
     title="PaperTrail API",
@@ -43,11 +55,6 @@ app.include_router(workspace_router)
 app.include_router(project_router)
 app.include_router(paper_router)
 app.include_router(draft_router)
-
-
-@app.on_event("startup")
-def startup_load_faiss_index():
-    load_index()
 
 
 @app.exception_handler(Exception)

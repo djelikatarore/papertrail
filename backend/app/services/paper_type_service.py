@@ -20,8 +20,8 @@ ACADEMIC_PAPER_TYPES = [
 NOT_ACADEMIC_LABEL = "Not an academic paper"
 
 CONTENT_WARNING_MESSAGE = (
-    "Ce document ne ressemble pas à un article académique — les résumés/mots-clés "
-    "générés peuvent être peu pertinents."
+    "This document doesn't look like an academic paper — generated summaries/keywords "
+    "may not be very relevant."
 )
 
 

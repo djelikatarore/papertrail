@@ -2,6 +2,8 @@
 uvicorn
 python-multipart
 sqlalchemy
+psycopg2-binary
+pgvector
 alembic
 pymupdf
 bcrypt
@@ -13,6 +15,5 @@ groq
 pytesseract
 pillow
 sentence-transformers
-faiss-cpu
 requests
 fpdf2
