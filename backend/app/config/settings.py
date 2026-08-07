@@ -34,6 +34,11 @@ VALID_REVIEW_TYPES = {"SYSTEMATIC", "SCOPING", "CRITICAL", "NARRATIVE", "RAPID"}
 VALID_DOCUMENT_TYPES = {"LITERATURE_REVIEW", "RESEARCH_PROPOSAL", "THESIS_CHAPTER", "CONFERENCE_PAPER", "OTHER"}
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# Optional second Groq account with its own separate quota — llm_service.py
+# switches to it immediately on a 429 from the primary key rather than
+# waiting out the primary key's rate limit. Unset by default; when absent,
+# behavior is unchanged (primary key only).
+GROQ_API_KEY_2 = os.getenv("GROQ_API_KEY_2")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
 
