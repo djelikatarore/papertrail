@@ -26,6 +26,8 @@ from app.models.user import User
 from app.models.workspace import Workspace
 from app.services.chat_service import get_history_grouped_by_date, get_or_create_paper_session, save_exchange
 from app.services.chunking_service import chunk_text
+from app.services.citation_service import get_citation_count
+from app.services.crossref_service import CrossrefLookupError
 from app.services.embedding_service import average_embedding, cosine_similarity, get_embedding, get_paper_embedding_source
 from app.services.keyword_service import extract_keywords
 from app.services.llm_service import LlmError, call_vision_llm
@@ -94,6 +96,7 @@ class PaperResponse(BaseModel):
     visual_elements_total: int | None
     visual_elements_processed: int | None
     visual_elements: list[VisualElementResponse] = []
+    citation_count: int | None
 
     class Config:
         from_attributes = True
@@ -258,17 +261,20 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
                     safe_log(f"[embedding_service] Failed to embed chunk '{section_reference}' for paper {paper.id}: {exc}")
                 db.add(text_block)
 
-            # Summary, keywords, and paper-type detection are three independent LLM
-            # calls over the same chunks — none depends on another's output, so
-            # running them concurrently instead of one-after-another cuts this
-            # part of the pipeline down to the slowest single call instead of the
-            # sum of all three. return_exceptions=True keeps each call's failure
-            # isolated (matches the original per-call try/except behavior) rather
-            # than one failure cancelling the other two in-flight calls.
-            summary_result, keywords_result, paper_type_result = await asyncio.gather(
+            # Summary, keywords, paper-type detection, and the citation count
+            # lookup (Semantic Scholar, falling back to CrossRef — see
+            # citation_service.py) are four independent calls over the same
+            # paper — none depends on another's output, so running them
+            # concurrently instead of one-after-another cuts this part of the
+            # pipeline down to the slowest single call instead of the sum of all
+            # four. return_exceptions=True keeps each call's failure isolated
+            # (matches the original per-call try/except behavior) rather than
+            # one failure cancelling the other in-flight calls.
+            summary_result, keywords_result, paper_type_result, citation_count_result = await asyncio.gather(
                 generate_summary(chunks, paper.review_type),
                 extract_keywords(chunks),
                 detect_paper_type(chunks),
+                get_citation_count(paper.title),
                 return_exceptions=True,
             )
 
@@ -297,6 +303,17 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
                 raise paper_type_result
             else:
                 paper.detected_paper_type, paper.content_warning = paper_type_result
+
+            if isinstance(citation_count_result, CrossrefLookupError):
+                # citation_service.get_citation_count only ever lets a
+                # CrossrefLookupError escape — a SemanticScholarLookupError is
+                # always caught and retried against CrossRef inside it.
+                # Reaching this branch means BOTH providers failed for this paper.
+                safe_log(f"[paper_router] Citation count lookup failed on both providers for paper {paper.id}: {citation_count_result}")
+            elif isinstance(citation_count_result, BaseException):
+                raise citation_count_result
+            else:
+                paper.citation_count, paper.citation_count_source = citation_count_result
 
             if not _paper_still_exists(db, paper_id):
                 safe_log(f"[paper_router] Paper {paper_id} was deleted during background processing; stopping before saving embeddings/results")

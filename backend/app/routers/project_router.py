@@ -141,7 +141,9 @@ def _is_likely_duplicate(candidate_title: str, existing_papers: list[Paper]) -> 
 class CitationGraphNode(BaseModel):
     paper_id: int
     title: str
-    citation_count: int = 0
+    # None means no confident CrossRef match was found (or the background
+    # lookup hasn't run yet) — distinct from 0 actual citations.
+    citation_count: int | None = None
 
 
 class CitationGraphLink(BaseModel):
@@ -470,10 +472,14 @@ def get_citation_graph(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Returns nodes/links data for visualizing relationships between papers in a
-    project, based on content similarity (NOT real bibliographic citations, since
-    we don't parse reference lists). citation_count is always 0 for now, kept in
-    the schema so the frontend can render it once/if real citation counts exist.
+    """Returns nodes/links data for the Citation Graph. Each node's citation_count
+    is the paper's real academic citation count (looked up from CrossRef by title
+    during background processing — see crossref_service.py); None if no confident
+    match was found or the lookup hasn't run yet, not necessarily 0 citations.
+    The links (content-similarity pairs, NOT real bibliographic citations, since
+    we don't parse reference lists) are still computed and returned — the
+    frontend's bar chart doesn't currently use them, but the field is left intact
+    rather than removed, in case a future view wants the similarity data again.
     Links are only included above OFF_TOPIC_SIMILARITY_THRESHOLD, the same cutoff
     already used to decide whether two papers are meaningfully related, so the
     graph doesn't end up fully connected with noise-level edges. Computed by
@@ -490,7 +496,7 @@ def get_citation_graph(
     papers = db.query(Paper).filter(Paper.project_id == project_id, Paper.embedding_vector.isnot(None)).all()
 
     nodes = [
-        CitationGraphNode(paper_id=p.id, title=p.title or p.filename, citation_count=0)
+        CitationGraphNode(paper_id=p.id, title=p.title or p.filename, citation_count=p.citation_count)
         for p in papers
     ]
 

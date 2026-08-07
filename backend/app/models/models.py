@@ -126,6 +126,25 @@ class Paper(Base):
         nullable=True
     )
 
+    # Real academic citation count, looked up by title — None means either the
+    # background lookup hasn't run yet or found no confident match, not "zero
+    # citations". See citation_service.py.
+    citation_count = Column(
+        Integer,
+        nullable=True
+    )
+
+    # Which provider citation_count actually came from: "semantic_scholar" or
+    # "crossref", or None if never looked up. Exists specifically so a later
+    # re-check (scripts/backfill_citation_counts.py) can tell a trustworthy
+    # Semantic Scholar count apart from a less reliable CrossRef one and never
+    # let the latter silently overwrite the former — see
+    # citation_service.should_replace_citation.
+    citation_count_source = Column(
+        String,
+        nullable=True
+    )
+
     project = relationship(
         "Project",
         back_populates="papers"
