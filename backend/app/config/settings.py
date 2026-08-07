@@ -52,6 +52,12 @@ CORE_API_KEY = os.getenv("CORE_API_KEY")
 if not CORE_API_KEY:
     raise RuntimeError("CORE_API_KEY is not set in .env")
 
+# Optional — unlike CORE_API_KEY above, this is allowed to be unset. When
+# absent, semantic_scholar_service.get_citation_count always raises (caught
+# by paper_router.py's fallback to CrossRef), so the app degrades gracefully
+# rather than failing to start.
+SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+
 VISUAL_ELEMENTS_DIR = os.getenv("VISUAL_ELEMENTS_DIR", "visual_elements")
 DRAFT_PDF_DIR = os.getenv("DRAFT_PDF_DIR", "draft_pdfs")
 DRAFT_PDF_FOOTER_TEXT = "Generated from PaperTrail draft"

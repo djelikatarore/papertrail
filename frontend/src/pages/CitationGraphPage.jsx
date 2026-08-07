@@ -10,7 +10,6 @@ export default function CitationGraphPage() {
   const navigate = useNavigate();
 
   const [nodes, setNodes] = useState([]);
-  const [links, setLinks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -19,8 +18,7 @@ export default function CitationGraphPage() {
     setError(null);
     getCitationGraph(workspaceId, projectId)
       .then((graph) => {
-        setNodes(graph.nodes.map((n) => ({ id: n.paper_id, title: n.title })));
-        setLinks(graph.links);
+        setNodes(graph.nodes.map((n) => ({ id: n.paper_id, title: n.title, citationCount: n.citation_count })));
       })
       .catch(() => setError("Could not load the citation graph. Please try again."))
       .finally(() => setLoading(false));
@@ -30,7 +28,7 @@ export default function CitationGraphPage() {
     <AppShell
       workspaceId={workspaceId}
       title="Citation Graph"
-      subtitle="How papers in this project relate to each other"
+      subtitle="How many times each paper has been cited by other researchers"
     >
       <div className="p-10">
         {error && (
@@ -45,7 +43,6 @@ export default function CitationGraphPage() {
           <div className="rounded-[var(--radius-card-lg)] border border-border bg-card p-6 shadow-card">
             <CitationGraphBarChart
               nodes={nodes}
-              links={links}
               onNodeClick={(paperId) =>
                 navigate(`/workspaces/${workspaceId}/projects/${projectId}/papers/${paperId}`)
               }
