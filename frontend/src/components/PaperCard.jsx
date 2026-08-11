@@ -74,6 +74,7 @@ export default function PaperCard({ paper, onClick, selected, onDelete }) {
       {paper.status === "ERROR" && paper.error_message && (
         <p className="text-xs text-red">{paper.error_message}</p>
       )}
+      {paper.processing_warning && <p className="text-xs text-amber">{paper.processing_warning}</p>}
       <FigureProgress paper={paper} />
     </div>
   );

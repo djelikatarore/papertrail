@@ -1,4 +1,4 @@
-import { FileText, FolderOpen, Plus, Search, UserPlus, X } from "lucide-react";
+import { FileText, FolderOpen, Plus, Search, Settings, UserPlus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
@@ -7,7 +7,7 @@ import InviteModal from "../components/InviteModal";
 import Modal from "../components/Modal";
 import PaginationControls from "../components/PaginationControls";
 import ProjectCard from "../components/ProjectCard";
-import { createProject } from "../services/projectService";
+import { createProject, updateProjectStatus } from "../services/projectService";
 import { listProjects, listWorkspaces, searchWorkspace } from "../services/workspaceService";
 
 export default function WorkspacePage() {
@@ -35,7 +35,7 @@ export default function WorkspacePage() {
   useEffect(() => {
     load(page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [page, workspaceId]);
 
   useEffect(() => {
     listWorkspaces()
@@ -57,6 +57,15 @@ export default function WorkspacePage() {
       })
       .catch(() => setError("Could not load projects. Please try again."))
       .finally(() => setLoading(false));
+  }
+
+  async function handleStatusChange(project, newStatus) {
+    try {
+      const updated = await updateProjectStatus(workspaceId, project.id, newStatus);
+      setItems((prev) => prev.map((p) => (p.id === project.id ? updated : p)));
+    } catch {
+      setError("Could not update this project's status. Please try again.");
+    }
   }
 
   async function handleSearch(event) {
@@ -110,6 +119,13 @@ export default function WorkspacePage() {
                 <UserPlus size={15} /> Invite
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => navigate(`/workspaces/${workspaceId}/settings`)}
+              className="btn-secondary px-4 py-2"
+            >
+              <Settings size={15} /> Settings
+            </button>
             <button type="button" onClick={() => setShowModal(true)} className="btn-primary px-4 py-2">
               <Plus size={15} /> New Project
             </button>
@@ -212,6 +228,7 @@ export default function WorkspacePage() {
                     key={project.id}
                     project={project}
                     onClick={() => navigate(`/workspaces/${workspaceId}/projects/${project.id}`)}
+                    onStatusChange={handleStatusChange}
                   />
                 ))}
                 <button

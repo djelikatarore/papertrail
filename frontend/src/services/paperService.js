@@ -22,8 +22,7 @@ export function getPaperChatHistory(paperId) {
 // attach the JWT this endpoint requires, so fetch the bytes via apiClient
 // and trigger the save through a throwaway object URL.
 export async function downloadPaperPdf(paper) {
-  const res = await apiClient.get(`/papers/${paper.id}/download`, { responseType: "blob" });
-  const url = URL.createObjectURL(res.data);
+  const url = await getPaperPdfObjectUrl(paper.id);
   const link = document.createElement("a");
   link.href = url;
   link.download = paper.filename ?? `${paper.id}.pdf`;
@@ -31,6 +30,15 @@ export async function downloadPaperPdf(paper) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+// Same JWT constraint as downloadPaperPdf, but for callers that want to keep
+// the object URL around (new-tab viewing, inline <iframe>) instead of
+// triggering an immediate download+revoke. Caller is responsible for
+// revoking the URL once it's no longer needed.
+export async function getPaperPdfObjectUrl(paperId) {
+  const res = await apiClient.get(`/papers/${paperId}/download`, { responseType: "blob" });
+  return URL.createObjectURL(res.data);
 }
 
 export function deletePaper(paperId) {

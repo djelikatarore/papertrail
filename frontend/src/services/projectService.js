@@ -20,6 +20,12 @@ export function deleteProject(workspaceId, projectId) {
   return apiClient.delete(`/workspaces/${workspaceId}/projects/${projectId}`);
 }
 
+export function updateProjectStatus(workspaceId, projectId, statusValue) {
+  return apiClient
+    .patch(`/workspaces/${workspaceId}/projects/${projectId}/status`, { status: statusValue })
+    .then((res) => res.data);
+}
+
 export function askComparative(workspaceId, projectId, { question, paperIds }) {
   return apiClient
     .post(`/workspaces/${workspaceId}/projects/${projectId}/ask-comparative`, {

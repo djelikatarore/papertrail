@@ -1,6 +1,6 @@
 import { FileText, MessageSquare, Network, Pencil, PenTool, Search, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import ErrorBanner from "../components/ErrorBanner";
@@ -25,6 +25,7 @@ const FILTERS = [
 export default function ProjectPage() {
   const { workspaceId, projectId } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [project, setProject] = useState(null);
   const [isOwner, setIsOwner] = useState(false);
@@ -124,6 +125,21 @@ export default function ProjectPage() {
     return () => clearInterval(pollRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, workspaceId, projectId]);
+
+  // The sidebar's "Upload Paper" item links here with ?upload=1 (it has no
+  // upload UI of its own) so it can actually open the modal instead of just
+  // dropping the user on the Library page one click short of what it promised.
+  useEffect(() => {
+    if (searchParams.get("upload") === "1") {
+      setShowUpload(true);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("upload");
+        return next;
+      }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   function load(targetPage) {
     setLoading(true);

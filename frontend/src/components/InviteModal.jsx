@@ -33,15 +33,19 @@ export default function InviteModal({ workspaceId, onClose }) {
     setEmailError(null);
     setEmailSuccess(null);
     try {
-      await inviteByEmail(workspaceId, email.trim());
-      setEmailSuccess(`${email.trim()} has been added to this workspace.`);
+      const result = await inviteByEmail(workspaceId, email.trim());
+      setEmailSuccess(
+        result.status === "invited"
+          ? `${email.trim()} doesn't have an account yet — an invitation email was sent.`
+          : `${email.trim()} has been added to this workspace.`
+      );
       setEmail("");
     } catch (err) {
       const status = err.response?.status;
-      if (status === 404) {
-        setEmailError("No PaperTrail account found with this email. Share the invite link instead.");
-      } else if (status === 409) {
+      if (status === 409) {
         setEmailError("This person is already a member of this workspace.");
+      } else if (status === 502) {
+        setEmailError("Could not send the invitation email. Please try again.");
       } else {
         setEmailError("Could not send this invite. Please try again.");
       }
@@ -56,7 +60,10 @@ export default function InviteModal({ workspaceId, onClose }) {
 
       <form onSubmit={handleInvite} className="mb-6">
         <label className="mb-1 block text-sm font-semibold text-text">Invite by email</label>
-        <p className="mb-2 text-xs text-muted">Works only for people who already have a PaperTrail account.</p>
+        <p className="mb-2 text-xs text-muted">
+          Adds them right away if they already have a PaperTrail account, otherwise sends them an invitation
+          email to create one and join automatically.
+        </p>
         <div className="flex gap-2">
           <input
             type="email"
@@ -74,7 +81,7 @@ export default function InviteModal({ workspaceId, onClose }) {
             disabled={!email.trim() || inviting}
             className="btn-primary px-4 py-2"
           >
-            {inviting ? "Adding..." : "Add"}
+            {inviting ? "Inviting..." : "Invite"}
           </button>
         </div>
         {emailError && <p className="mt-2 text-xs text-red">{emailError}</p>}

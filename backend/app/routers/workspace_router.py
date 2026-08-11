@@ -14,8 +14,12 @@ from app.models.project import Project
 from app.models.project_access_restriction import ProjectAccessRestriction
 from app.models.user import User
 from app.models.workspace import Workspace
+from app.models.workspace_invitation import WorkspaceInvitation
 from app.models.workspace_member import WorkspaceMember
+from app.routers.project_router import cascade_delete_project_contents
+from app.services.email_service import send_workspace_invitation_email
 from app.utils.auth_dependency import get_current_user
+from app.utils.logging_utils import safe_log
 from app.utils.workspace_access import get_workspace_or_404, require_member
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -23,6 +27,11 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 class CreateWorkspaceRequest(BaseModel):
     name: str
+    description: str | None = None
+
+
+class UpdateWorkspaceRequest(BaseModel):
+    name: str | None = None
     description: str | None = None
 
 
@@ -74,6 +83,24 @@ class WorkspaceMemberResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class InviteResponse(BaseModel):
+    """"added" when the email matched an existing account (same as the old
+    behavior — WorkspaceMemberResponse fields are populated); "invited" when
+    it didn't and a real invitation email was sent instead (member_id/role
+    stay None — there's no membership yet, only once they sign up with this
+    exact token, see auth_router.signup)."""
+
+    status: str
+    email: str
+    member_id: int | None = None
+    role: str | None = None
+
+
+class InvitationPreviewResponse(BaseModel):
+    workspace_name: str
+    email: str
 
 
 class PaperSearchResultResponse(BaseModel):
@@ -165,6 +192,65 @@ def list_workspaces(
     ]
 
 
+@router.put("/{workspace_id}", response_model=WorkspaceResponse)
+def update_workspace(
+    workspace_id: int,
+    payload: UpdateWorkspaceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    workspace = get_workspace_or_404(workspace_id, db)
+
+    if workspace.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workspace owner can rename this workspace",
+        )
+
+    if payload.name is not None:
+        if not payload.name.strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace name cannot be empty")
+        workspace.name = payload.name.strip()
+    if payload.description is not None:
+        workspace.description = payload.description
+
+    db.commit()
+    db.refresh(workspace)
+
+    return workspace
+
+
+@router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_workspace(
+    workspace_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Deletes a workspace and everything in it: every project (cascaded the
+    same way as a standalone project delete — see
+    cascade_delete_project_contents — papers, drafts, chat history, files on
+    disk), then the projects themselves, then every workspace membership,
+    then the workspace row itself."""
+    workspace = get_workspace_or_404(workspace_id, db)
+
+    if workspace.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workspace owner can delete this workspace",
+        )
+
+    project_ids = [pid for (pid,) in db.query(Project.id).filter(Project.workspace_id == workspace_id).all()]
+    for project_id in project_ids:
+        cascade_delete_project_contents(db, project_id)
+    if project_ids:
+        db.query(Project).filter(Project.id.in_(project_ids)).delete(synchronize_session=False)
+
+    db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == workspace_id).delete(synchronize_session=False)
+
+    db.delete(workspace)
+    db.commit()
+
+
 @router.get("/{workspace_id}/members", response_model=list[WorkspaceMemberDetailResponse])
 def list_workspace_members(
     workspace_id: int,
@@ -194,9 +280,48 @@ def list_workspace_members(
     ]
 
 
+@router.delete("/{workspace_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_workspace_member(
+    workspace_id: int,
+    member_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner-only. Only cuts the member's future access — their past
+    contributions (papers they uploaded, review comments they wrote) stay
+    exactly where they are, still attributed to them, same as an
+    access-restricted (but not removed) member's contributions already do
+    (see update_project_access). Their per-project access restrictions are
+    cleaned up since a removed member has no access to clean up anymore."""
+    workspace = get_workspace_or_404(workspace_id, db)
+
+    if workspace.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workspace owner can remove a member",
+        )
+
+    membership = (
+        db.query(WorkspaceMember)
+        .filter(WorkspaceMember.id == member_id, WorkspaceMember.workspace_id == workspace_id)
+        .first()
+    )
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace member not found")
+
+    if membership.user_id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot remove yourself")
+
+    db.query(ProjectAccessRestriction).filter(
+        ProjectAccessRestriction.workspace_member_id == member_id
+    ).delete(synchronize_session=False)
+    db.delete(membership)
+    db.commit()
+
+
 @router.post(
     "/{workspace_id}/invite",
-    response_model=WorkspaceMemberResponse,
+    response_model=InviteResponse,
     status_code=status.HTTP_201_CREATED,
 )
 def invite_user_by_email(
@@ -205,6 +330,10 @@ def invite_user_by_email(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """If the email matches an existing PaperTrail account, adds them
+    directly (unchanged from before). Otherwise, sends a real invitation
+    email with a signup link carrying a dedicated, per-email token — see
+    WorkspaceInvitation and auth_router.signup, which consumes it."""
     workspace = get_workspace_or_404(workspace_id, db)
 
     if workspace.owner_id != current_user.id:
@@ -214,42 +343,90 @@ def invite_user_by_email(
         )
 
     invited_user = db.query(User).filter(User.email == payload.email).first()
-    if not invited_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No user found with this email",
-        )
 
-    existing_membership = (
-        db.query(WorkspaceMember)
-        .filter(
-            WorkspaceMember.workspace_id == workspace.id,
-            WorkspaceMember.user_id == invited_user.id,
+    if invited_user:
+        existing_membership = (
+            db.query(WorkspaceMember)
+            .filter(
+                WorkspaceMember.workspace_id == workspace.id,
+                WorkspaceMember.user_id == invited_user.id,
+            )
+            .first()
         )
+        if existing_membership:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="User is already a member of this workspace"
+            )
+
+        membership = WorkspaceMember(
+            workspace_id=workspace.id,
+            user_id=invited_user.id,
+            role="MEMBER",
+            joined_at=datetime.now(timezone.utc).isoformat(),
+        )
+        db.add(membership)
+        try:
+            db.commit()
+        except IntegrityError:
+            # The pre-check above isn't atomic — two concurrent invites for the
+            # same email can both pass it before either commits. The DB-level
+            # unique constraint (workspace_id, user_id) is the real guard; this
+            # just turns its violation into the same clean 409 instead of a raw 500.
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="User is already a member of this workspace"
+            )
+        db.refresh(membership)
+
+        return InviteResponse(status="added", email=payload.email, member_id=membership.id, role=membership.role)
+
+    # No account with this email — reuse a still-pending invitation's token
+    # if this exact email was already invited to this exact workspace
+    # (re-inviting becomes "resend" rather than minting a second, orphaned
+    # token), otherwise create a new one.
+    invitation = (
+        db.query(WorkspaceInvitation)
+        .filter(WorkspaceInvitation.workspace_id == workspace.id, WorkspaceInvitation.email == payload.email)
         .first()
     )
-    if existing_membership:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User is already a member of this workspace")
-
-    membership = WorkspaceMember(
-        workspace_id=workspace.id,
-        user_id=invited_user.id,
-        role="MEMBER",
-        joined_at=datetime.now(timezone.utc).isoformat(),
-    )
-    db.add(membership)
-    try:
+    if not invitation:
+        invitation = WorkspaceInvitation(
+            workspace_id=workspace.id,
+            email=payload.email,
+            token=secrets.token_urlsafe(24),
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        db.add(invitation)
         db.commit()
-    except IntegrityError:
-        # The pre-check above isn't atomic — two concurrent invites for the
-        # same email can both pass it before either commits. The DB-level
-        # unique constraint (workspace_id, user_id) is the real guard; this
-        # just turns its violation into the same clean 409 instead of a raw 500.
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User is already a member of this workspace")
-    db.refresh(membership)
+        db.refresh(invitation)
 
-    return membership
+    join_link = f"{FRONTEND_URL}/signup?invite={invitation.token}"
+    try:
+        send_workspace_invitation_email(payload.email, workspace.name, join_link)
+    except Exception as exc:
+        safe_log(f"[workspace_router] Failed to send invitation email to {payload.email}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not send the invitation email. Please try again.",
+        )
+
+    return InviteResponse(status="invited", email=payload.email)
+
+
+@router.get("/invitations/{token}", response_model=InvitationPreviewResponse)
+def get_invitation_preview(token: str, db: Session = Depends(get_db)):
+    """Public (no auth) — powers "You've been invited to join <workspace>"
+    on the signup page before the visitor has an account to authenticate
+    with."""
+    invitation = db.query(WorkspaceInvitation).filter(WorkspaceInvitation.token == token).first()
+    if not invitation or invitation.accepted_at:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid or already-used invitation")
+
+    workspace = db.query(Workspace).filter(Workspace.id == invitation.workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid invitation")
+
+    return InvitationPreviewResponse(workspace_name=workspace.name, email=invitation.email)
 
 
 @router.get("/{workspace_id}/invite-link", response_model=InviteLinkResponse)

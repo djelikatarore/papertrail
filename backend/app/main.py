@@ -15,6 +15,7 @@ from app.models.chat_message import ChatMessage
 from app.models.draft_document import DraftDocument
 from app.models.review_comment import ReviewComment
 from app.models.project_access_restriction import ProjectAccessRestriction
+from app.models.workspace_invitation import WorkspaceInvitation
 
 from app.routers.auth_router import router as auth_router
 from app.routers.draft_router import router as draft_router

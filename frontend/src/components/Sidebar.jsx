@@ -1,4 +1,5 @@
 import {
+  ChevronRight,
   FileText,
   FolderOpen,
   LayoutDashboard,
@@ -10,10 +11,15 @@ import {
   Sparkles,
   Upload,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { listWorkspaces } from "../services/workspaceService";
 
-// Similar Papers / Draft Generation / Draft Review are real, working screens
-// — but each needs a project (and Similar Papers also a paper) selected
+const RECENT_WORKSPACES_LIMIT = 5;
+
+// Upload Paper / Similar Papers / Draft Generation / Draft Review are real,
+// working screens — but each needs a project (and Similar Papers also a
+// paper) selected
 // first, and the sidebar has no picker of its own. So rather than a
 // permanent "coming soon" placeholder, these items activate/deactivate based
 // on whatever project/paper context the current route already has (read via
@@ -31,7 +37,12 @@ const SECTIONS = (workspaceId, projectId, paperId) => [
   {
     label: "Paper Tools",
     items: [
-      { label: "Upload Paper", icon: Upload, inert: true },
+      {
+        label: "Upload Paper",
+        icon: Upload,
+        to: projectId ? `/workspaces/${workspaceId}/projects/${projectId}?upload=1` : undefined,
+        inert: !projectId,
+      },
       {
         label: "AI Chat",
         icon: MessageSquare,
@@ -76,6 +87,17 @@ export default function Sidebar({ workspaceId }) {
   const navigate = useNavigate();
   const { projectId, paperId } = useParams();
   const sections = SECTIONS(workspaceId, projectId, paperId);
+  const [workspaces, setWorkspaces] = useState([]);
+
+  useEffect(() => {
+    listWorkspaces()
+      .then(setWorkspaces)
+      .catch(() => setWorkspaces([]));
+  }, []);
+
+  const recentWorkspaces = [...workspaces]
+    .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
+    .slice(0, RECENT_WORKSPACES_LIMIT);
 
   return (
     <aside className="flex h-screen w-[228px] shrink-0 flex-col bg-sidebar">
@@ -89,14 +111,44 @@ export default function Sidebar({ workspaceId }) {
       <div className="px-4 pb-2">
         <button
           type="button"
-          disabled={!workspaceId}
-          onClick={() => workspaceId && navigate(`/workspaces/${workspaceId}`)}
-          className="flex w-full items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/5 px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.08] disabled:cursor-default disabled:opacity-50"
+          onClick={() => navigate("/workspaces")}
+          className="flex w-full items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/5 px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.08]"
         >
           <Search size={13} className="text-white/30" strokeWidth={1.5} />
-          <span className="flex-1 text-xs text-white/30">Search this workspace…</span>
+          <span className="flex-1 text-xs text-white/30">Search workspaces…</span>
         </button>
       </div>
+
+      {recentWorkspaces.length > 0 && (
+        <div className="px-3 pb-1">
+          <p className="mb-1.5 ml-2 text-[10px] font-bold uppercase tracking-wider text-white/22">Workspaces</p>
+          {recentWorkspaces.map((w) => {
+            const active = String(w.id) === String(workspaceId);
+            return (
+              <button
+                key={w.id}
+                type="button"
+                onClick={() => navigate(`/workspaces/${w.id}`)}
+                className={`mb-0.5 flex w-full items-center truncate rounded-xl px-2.5 py-2 text-left text-[13.5px] transition-colors ${
+                  active
+                    ? "bg-sidebar-active font-semibold text-[#DDD6FE]"
+                    : "text-white/50 hover:bg-sidebar-hover hover:text-white/80"
+                }`}
+                title={w.name}
+              >
+                <span className="truncate">{w.name}</span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => navigate("/workspaces")}
+            className="mb-0.5 flex w-full items-center gap-1 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-white/35 transition-colors hover:text-white/60"
+          >
+            See all workspaces <ChevronRight size={12} />
+          </button>
+        </div>
+      )}
 
       <nav className="no-scrollbar flex-1 overflow-auto px-3 pb-3 pt-2">
         {sections.map((section) => (

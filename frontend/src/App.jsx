@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AllWorkspacesPage from "./pages/AllWorkspacesPage";
 import CitationGraphPage from "./pages/CitationGraphPage";
 import DashboardPage from "./pages/DashboardPage";
 import DraftGenerationPage from "./pages/DraftGenerationPage";
@@ -16,6 +17,7 @@ import SettingsPage from "./pages/SettingsPage";
 import SignupPage from "./pages/SignupPage";
 import SimilarPapersPage from "./pages/SimilarPapersPage";
 import WorkspacePage from "./pages/WorkspacePage";
+import WorkspaceSettingsPage from "./pages/WorkspaceSettingsPage";
 
 export default function App() {
   return (
@@ -27,8 +29,10 @@ export default function App() {
 
       <Route element={<ProtectedRoute />}>
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/workspaces" element={<AllWorkspacesPage />} />
         <Route path="/workspaces/join/:token" element={<JoinWorkspacePage />} />
         <Route path="/workspaces/:workspaceId" element={<WorkspacePage />} />
+        <Route path="/workspaces/:workspaceId/settings" element={<WorkspaceSettingsPage />} />
         <Route
           path="/workspaces/:workspaceId/projects/:projectId"
           element={<ProjectPage />}

@@ -1,4 +1,4 @@
-import { Download, MessageSquare, Search, Send, Sparkles, Trash2 } from "lucide-react";
+import { Download, ExternalLink, Eye, MessageSquare, Search, Send, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
@@ -8,10 +8,19 @@ import ErrorBanner from "../components/ErrorBanner";
 import NonAcademicWarningBanner from "../components/NonAcademicWarningBanner";
 import NonAcademicWarningModal from "../components/NonAcademicWarningModal";
 import PaperTypeBadge from "../components/PaperTypeBadge";
+import PdfViewerModal from "../components/PdfViewerModal";
 import ReviewTypeBadge from "../components/ReviewTypeBadge";
 import SimilarityPanel from "../components/SimilarityPanel";
 import { StatusPill } from "../components/StatusBadge";
-import { askQuestion, deletePaper, downloadPaperPdf, getPaper, getPaperChatHistory } from "../services/paperService";
+import WarningBanner from "../components/WarningBanner";
+import {
+  askQuestion,
+  deletePaper,
+  downloadPaperPdf,
+  getPaper,
+  getPaperChatHistory,
+  getPaperPdfObjectUrl,
+} from "../services/paperService";
 import { getProject, getSimilarity } from "../services/projectService";
 import { listWorkspaces } from "../services/workspaceService";
 
@@ -61,6 +70,9 @@ export default function PaperDetailsPage() {
   const [exchanges, setExchanges] = useState([]);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(null);
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState(null);
+  const [showPdfViewer, setShowPdfViewer] = useState(false);
   const [summaryTab, setSummaryTab] = useState(SUMMARY_TABS[0].key);
   const [isOwner, setIsOwner] = useState(false);
   const [ownerCheckFailed, setOwnerCheckFailed] = useState(false);
@@ -131,6 +143,11 @@ export default function PaperDetailsPage() {
   }
 
   const displayTitle = paper.title ?? paper.filename;
+  // Undescribed elements (beyond the Vision call cap, or a failed
+  // description) stay in the API response but shouldn't clutter the
+  // gallery with placeholder "no description" cards — see paper_router.py's
+  // VISION_CALL_CAP.
+  const describedVisualElements = paper.visual_elements.filter((ve) => ve.ai_description);
 
   async function handleDownload() {
     if (downloading) return;
@@ -142,6 +159,26 @@ export default function PaperDetailsPage() {
       setDownloadError("Could not download this paper. Please try again.");
     } finally {
       setDownloading(false);
+    }
+  }
+
+  // Opens a blank tab synchronously (before the await) so the browser still
+  // credits it to the click gesture — setting its location after the blob is
+  // ready avoids popup blockers, which would otherwise treat a window.open()
+  // called after an async fetch as an unrequested popup.
+  async function handleOpenPdf() {
+    if (opening) return;
+    setOpening(true);
+    setOpenError(null);
+    const newTab = window.open("", "_blank");
+    try {
+      const url = await getPaperPdfObjectUrl(paper.id);
+      if (newTab) newTab.location.href = url;
+    } catch {
+      if (newTab) newTab.close();
+      setOpenError("Could not open this paper. Please try again.");
+    } finally {
+      setOpening(false);
     }
   }
 
@@ -222,6 +259,18 @@ export default function PaperDetailsPage() {
           </div>
         )}
 
+        {paper.status === "ERROR" && paper.error_message && (
+          <div className="mb-6">
+            <ErrorBanner message={paper.error_message} />
+          </div>
+        )}
+
+        {paper.processing_warning && (
+          <div className="mb-6">
+            <WarningBanner message={paper.processing_warning} />
+          </div>
+        )}
+
         <div className="mb-6 overflow-hidden rounded-[var(--radius-card-lg)] border border-border bg-card shadow-card">
           <div className="flex px-6 pt-1" style={{ borderBottom: "1px solid var(--color-border)" }}>
             {SUMMARY_TABS.map((tab) => (
@@ -246,20 +295,18 @@ export default function PaperDetailsPage() {
           </div>
         </div>
 
-        {paper.visual_elements.length > 0 && (
+        {describedVisualElements.length > 0 && (
           <div className="mb-6 rounded-[var(--radius-card-lg)] border border-border bg-card p-6 shadow-card">
             <p className="mb-4 text-sm font-bold text-text">Figures</p>
             <div className="grid grid-cols-3 gap-4">
-              {paper.visual_elements.map((ve) => (
+              {describedVisualElements.map((ve) => (
                 <div key={ve.id}>
                   <AuthenticatedImage
                     src={`/papers/${paperId}/visual-elements/${ve.id}/image`}
-                    alt={ve.ai_description ?? `Figure on page ${ve.page_number}`}
+                    alt={ve.ai_description}
                     className="mb-2 h-32 w-full rounded-xl border border-border object-cover"
                   />
-                  <p className="text-xs leading-snug text-muted">
-                    {ve.ai_description ?? "No description available."}
-                  </p>
+                  <p className="text-xs leading-snug text-muted">{ve.ai_description}</p>
                 </div>
               ))}
             </div>
@@ -294,6 +341,21 @@ export default function PaperDetailsPage() {
           </button>
           <button
             type="button"
+            onClick={handleOpenPdf}
+            disabled={opening}
+            className="btn-secondary px-4 py-2"
+          >
+            <ExternalLink size={14} /> {opening ? "Opening..." : "Open PDF"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowPdfViewer(true)}
+            className="btn-secondary px-4 py-2"
+          >
+            <Eye size={14} /> View PDF
+          </button>
+          <button
+            type="button"
             onClick={handleDownload}
             disabled={downloading}
             className="btn-secondary px-4 py-2"
@@ -311,6 +373,12 @@ export default function PaperDetailsPage() {
             </button>
           )}
         </div>
+
+        {openError && (
+          <div className="mb-6">
+            <ErrorBanner message={openError} />
+          </div>
+        )}
 
         {downloadError && (
           <div className="mb-6">
@@ -415,6 +483,10 @@ export default function PaperDetailsPage() {
           deleting={warningDeleting}
           error={warningDeleteError}
         />
+      )}
+
+      {showPdfViewer && (
+        <PdfViewerModal paper={{ id: paperId, title: paper.title, filename: paper.filename }} onClose={() => setShowPdfViewer(false)} />
       )}
     </AppShell>
   );

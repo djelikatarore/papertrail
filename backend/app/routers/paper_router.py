@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config.settings import (
@@ -35,7 +36,7 @@ from app.services.paper_type_service import detect_paper_type
 from app.services.pdf_service import PdfExtractionError, extract_text, extract_title
 from app.services.qa_service import generate_grounded_answer, retrieve_relevant_chunks_pgvector
 from app.services.summary_service import generate_summary
-from app.services.visual_extraction_service import extract_visual_elements
+from app.services.visual_extraction_service import extract_visual_elements, filter_duplicate_images
 from app.utils.auth_dependency import get_current_user
 from app.utils.logging_utils import safe_log
 from app.utils.workspace_access import get_workspace_or_404, require_member, require_project_access
@@ -43,11 +44,65 @@ from app.utils.workspace_access import get_workspace_or_404, require_member, req
 router = APIRouter(prefix="/papers", tags=["papers"])
 
 VISION_CONCURRENCY_LIMIT = 3
+# Free-tier Groq quota makes an unbounded number of Vision calls per paper
+# unsustainable — confirmed in practice on an 83-figure paper. Every filtered
+# candidate is still extracted, saved, and stored as a VisualElement row (see
+# below); only the first VISION_CALL_CAP of them ever get sent to Vision. The
+# rest are left with ai_description=None, surfaced via processing_warning,
+# and hidden from the frontend gallery (PaperDetailsPage.jsx) rather than
+# shown with a "no description" placeholder.
+VISION_CALL_CAP = 20
 
 VISUAL_DESCRIPTION_PROMPT = (
     "Describe this figure from an academic paper in 1-2 concise sentences. "
     "Focus on what it shows (e.g., architecture diagram, chart, plot, photo) and its key content."
 )
+
+
+def _build_processing_warning(text_field_labels: list[str], vision_failed: int, vision_total: int) -> str | None:
+    """Summary/keywords/paper-type detection and figure descriptions each
+    degrade gracefully on their own (an LlmError — including a Groq rate
+    limit exhausted after 20 retries — is caught per-call and just leaves
+    that field empty rather than failing the whole paper). That's the right
+    behavior for the pipeline, but on its own it's silent: a paper can end
+    up READY with pieces quietly missing and nothing telling the user so.
+    This turns whichever pieces degraded into one human-readable, non-fatal
+    warning to show alongside the (still READY) paper."""
+    if not text_field_labels and not vision_failed:
+        return None
+
+    if vision_failed and not text_field_labels:
+        noun = "description" if vision_failed == 1 else "descriptions"
+        return (
+            "This paper has many figures and hit a temporary AI processing limit. "
+            f"{vision_failed} of {vision_total} image {noun} may be missing — "
+            "try reprocessing later, or continue without them."
+        )
+
+    parts = list(text_field_labels)
+    if vision_failed:
+        noun = "figure description" if vision_failed == 1 else "figure descriptions"
+        parts.append(f"{vision_failed} of {vision_total} {noun}")
+    listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + f", and {parts[-1]}"
+    return (
+        f"This paper hit a temporary AI processing limit while generating: {listed}. "
+        "Try reprocessing later, or continue using it as-is."
+    )
+
+
+def _classify_crash_message(exc: Exception) -> str:
+    """Only reached for failures the pipeline's own per-step guards don't
+    already catch (an LLM/citation-lookup failure degrades gracefully into
+    processing_warning above instead of landing here) — so this is
+    structural failures: a bad DB write, a file-system problem, or a genuine
+    bug. Distinguishing the category at least tells the user (or whoever's
+    debugging) where to look, instead of one indistinguishable
+    "unexpectedly failed" for every kind of crash."""
+    if isinstance(exc, SQLAlchemyError):
+        return f"Processing failed due to a database error and could not complete: {exc}"
+    if isinstance(exc, OSError):
+        return f"Processing failed due to a file error and could not complete: {exc}"
+    return f"Processing failed unexpectedly: {exc}"
 
 
 class VisualElementResponse(BaseModel):
@@ -83,6 +138,7 @@ class PaperResponse(BaseModel):
     uploaded_by: int | None
     raw_text: str | None
     error_message: str | None
+    processing_warning: str | None
     contribution: str | None
     methodology: str | None
     key_results: str | None
@@ -243,9 +299,14 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             paper.title = extract_title(file_path, raw_text)
             paper.status = "READY"
             paper.error_message = None
+            paper.processing_warning = None
         except PdfExtractionError as exc:
             paper.status = "ERROR"
             paper.error_message = str(exc)
+
+        degraded_fields: list[str] = []
+        vision_failed_count = 0
+        vision_candidate_count = 0
 
         if paper.status == "READY":
             chunks = chunk_text(paper.raw_text)
@@ -280,6 +341,7 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
 
             if isinstance(summary_result, LlmError):
                 safe_log(f"[summary_service] Failed to generate summary for paper {paper.id}: {summary_result}")
+                degraded_fields.append("summary")
             elif isinstance(summary_result, BaseException):
                 raise summary_result
             else:
@@ -292,6 +354,7 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
 
             if isinstance(keywords_result, LlmError):
                 safe_log(f"[keyword_service] Failed to extract keywords for paper {paper.id}: {keywords_result}")
+                degraded_fields.append("keywords")
             elif isinstance(keywords_result, BaseException):
                 raise keywords_result
             else:
@@ -299,6 +362,7 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
 
             if isinstance(paper_type_result, LlmError):
                 safe_log(f"[paper_type_service] Failed to detect paper type for paper {paper.id}: {paper_type_result}")
+                degraded_fields.append("paper type detection")
             elif isinstance(paper_type_result, BaseException):
                 raise paper_type_result
             else:
@@ -351,56 +415,73 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             db.rollback()
             return
 
-        try:
-            os.makedirs(VISUAL_ELEMENTS_DIR, exist_ok=True)
-            visual_elements = []
-            for index, (page_number, image_bytes, ext) in enumerate(extract_visual_elements(file_path)):
-                image_filename = f"{paper.id}_{page_number}_{index}.{ext}"
-                image_disk_path = os.path.join(VISUAL_ELEMENTS_DIR, image_filename)
-                with open(image_disk_path, "wb") as f:
-                    f.write(image_bytes)
+        os.makedirs(VISUAL_ELEMENTS_DIR, exist_ok=True)
+        visual_elements = []
+        extracted_images = filter_duplicate_images(extract_visual_elements(file_path))
+        for index, (page_number, image_bytes, ext) in enumerate(extracted_images):
+            image_filename = f"{paper.id}_{page_number}_{index}.{ext}"
+            image_disk_path = os.path.join(VISUAL_ELEMENTS_DIR, image_filename)
+            with open(image_disk_path, "wb") as f:
+                f.write(image_bytes)
 
-                visual_elements.append(
-                    VisualElement(
-                        paper_id=paper.id,
-                        element_type="image",
-                        image_path=image_disk_path,
-                        page_number=page_number,
-                    )
+            visual_elements.append(
+                VisualElement(
+                    paper_id=paper.id,
+                    element_type="image",
+                    image_path=image_disk_path,
+                    page_number=page_number,
                 )
+            )
 
-            if visual_elements:
-                for ve in visual_elements:
-                    db.add(ve)
-                paper.visual_elements_total = len(visual_elements)
-                paper.visual_elements_processed = 0
-                db.commit()
+        if visual_elements:
+            for ve in visual_elements:
+                db.add(ve)
 
-                # One vision call per figure, all independent — but bounded to
-                # VISION_CONCURRENCY_LIMIT at a time rather than all at once.
-                # Firing every figure simultaneously (confirmed with a real
-                # 83-figure paper) blows through Groq's per-minute token budget
-                # for the vision model in one burst, so most calls fail instead
-                # of just queuing — a small concurrency cap gets most of the
-                # parallelization benefit for typical papers (a handful of
-                # figures) while staying under the rate limit for image-heavy
-                # ones. call_vision_llm's own rate-limit-aware retry (see
-                # llm_service.py) handles the rest: no image is given up on,
-                # it just may take a while for a very image-heavy paper.
-                semaphore = asyncio.Semaphore(VISION_CONCURRENCY_LIMIT)
+            # Every filtered candidate is stored (nothing is lost), but only
+            # the first VISION_CALL_CAP are ever sent to Vision — see
+            # VISION_CALL_CAP's comment above. visual_elements_total reflects
+            # what will actually be attempted, so the frontend's live
+            # "Describing figures: X/Y" progress doesn't appear to stall at
+            # e.g. "20/73".
+            capped_elements = visual_elements[:VISION_CALL_CAP]
+            skipped_count = len(visual_elements) - len(capped_elements)
+            vision_failed_count += skipped_count
+            vision_candidate_count = len(visual_elements)
 
-                async def _describe_and_track(ve: VisualElement) -> None:
-                    async with semaphore:
-                        try:
-                            ve.ai_description = await call_vision_llm(VISUAL_DESCRIPTION_PROMPT, ve.image_path)
-                        except LlmError as exc:
-                            safe_log(f"[llm_service] Failed to describe image {ve.image_path}: {exc}")
-                        paper.visual_elements_processed = (paper.visual_elements_processed or 0) + 1
-                        db.commit()
+            paper.visual_elements_total = len(capped_elements)
+            paper.visual_elements_processed = 0
+            db.commit()
 
-                await asyncio.gather(*(_describe_and_track(ve) for ve in visual_elements))
-        except Exception as exc:
-            safe_log(f"[visual_extraction_service] Failed to extract visual elements for paper {paper.id}: {exc}")
+            # One vision call per figure, all independent — but bounded to
+            # VISION_CONCURRENCY_LIMIT at a time rather than all at once.
+            # Firing every figure simultaneously (confirmed with a real
+            # 83-figure paper) blows through Groq's per-minute token budget
+            # for the vision model in one burst, so most calls fail instead
+            # of just queuing — a small concurrency cap gets most of the
+            # parallelization benefit for typical papers (a handful of
+            # figures) while staying under the rate limit for image-heavy
+            # ones. call_vision_llm's own rate-limit-aware retry (see
+            # llm_service.py) handles the rest, now bounded (MAX_RETRY_WAIT_SECONDS)
+            # so a single stuck image can't stall the whole paper for hours.
+            semaphore = asyncio.Semaphore(VISION_CONCURRENCY_LIMIT)
+
+            async def _describe_and_track(ve: VisualElement) -> None:
+                nonlocal vision_failed_count
+                async with semaphore:
+                    try:
+                        ve.ai_description = await call_vision_llm(VISUAL_DESCRIPTION_PROMPT, ve.image_path)
+                    except LlmError as exc:
+                        vision_failed_count += 1
+                        safe_log(f"[llm_service] Failed to describe image {ve.image_path}: {exc}")
+                    paper.visual_elements_processed = (paper.visual_elements_processed or 0) + 1
+                    db.commit()
+
+            await asyncio.gather(*(_describe_and_track(ve) for ve in capped_elements))
+
+        if paper.status == "READY":
+            paper.processing_warning = _build_processing_warning(
+                degraded_fields, vision_failed_count, vision_candidate_count or vision_failed_count
+            )
 
         db.commit()
     except Exception as exc:
@@ -410,7 +491,7 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             paper = db.query(Paper).filter(Paper.id == paper_id).first()
             if paper:
                 paper.status = "ERROR"
-                paper.error_message = f"Processing failed unexpectedly: {exc}"
+                paper.error_message = _classify_crash_message(exc)
                 db.commit()
         except Exception as inner_exc:
             safe_log(f"[paper_router] Failed to mark paper {paper_id} as ERROR after crash: {inner_exc}")

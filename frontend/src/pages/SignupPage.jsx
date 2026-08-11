@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import PasswordInput from "../components/PasswordInput";
 import PasswordStrengthIndicator from "../components/PasswordStrengthIndicator";
@@ -6,6 +6,7 @@ import { useAuth } from "../context/AuthContext";
 import useClearSensitiveFieldsOnRestore from "../hooks/useClearSensitiveFieldsOnRestore";
 import { getCurrentUser, login, signup } from "../services/authService";
 import { setToken } from "../services/tokenStore";
+import { getInvitationPreview } from "../services/workspaceService";
 import { isValidEmail } from "../utils/emailValidation";
 import { getPasswordError, isAtMaxLength } from "../utils/passwordValidation";
 
@@ -14,18 +15,35 @@ export default function SignupPage() {
   const { login: setAuth } = useAuth();
   const [searchParams] = useSearchParams();
   const redirect = searchParams.get("redirect");
+  const inviteToken = searchParams.get("invite");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitError, setSubmitError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [invitation, setInvitation] = useState(null);
+  const [invitationError, setInvitationError] = useState(null);
 
   useClearSensitiveFieldsOnRestore(() => {
     setEmail("");
     setPassword("");
     setConfirmPassword("");
   });
+
+  // A valid invite link pre-fills and locks the email field — the backend
+  // rejects signup if it doesn't match the invited address exactly, so
+  // locking it here avoids a confusing rejection after filling the whole form.
+  useEffect(() => {
+    if (!inviteToken) return;
+    getInvitationPreview(inviteToken)
+      .then((preview) => {
+        setInvitation(preview);
+        setEmail(preview.email);
+      })
+      .catch(() => setInvitationError("This invitation link is invalid or has already been used."));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteToken]);
 
   const emailError = email && !isValidEmail(email) ? "Please enter a valid email address." : null;
   const passwordError = password ? getPasswordError(password) : null;
@@ -51,7 +69,7 @@ export default function SignupPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await signup({ fullName, email, password });
+      await signup({ fullName, email, password, inviteToken });
     } catch (err) {
       setSubmitError(err.response?.data?.detail ?? "Signup failed. Please try again.");
       setSubmitting(false);
@@ -79,6 +97,15 @@ export default function SignupPage() {
       <div className="w-full max-w-sm rounded-[var(--radius-card-lg)] border border-border bg-card p-8 shadow-card">
         <h1 className="mb-6 text-2xl font-bold tracking-tight text-text">Sign up</h1>
 
+        {invitation && (
+          <div className="mb-5 rounded-lg bg-accent-light px-4 py-3 text-sm text-accent">
+            You've been invited to join <strong>{invitation.workspace_name}</strong>.
+          </div>
+        )}
+        {invitationError && (
+          <div className="mb-5 rounded-lg bg-red-light px-4 py-3 text-sm text-red">{invitationError}</div>
+        )}
+
         <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
           <div>
             <label className="mb-1 block text-sm font-semibold text-text">Full name</label>
@@ -97,8 +124,9 @@ export default function SignupPage() {
               type="email"
               autoComplete="email"
               value={email}
+              disabled={!!invitation}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-xl border border-border px-3.5 py-2 text-sm outline-none transition-colors focus:border-accent"
+              className="w-full rounded-xl border border-border px-3.5 py-2 text-sm outline-none transition-colors focus:border-accent disabled:bg-app-bg disabled:text-muted"
             />
             {emailError && <p className="mt-1 text-xs text-red">{emailError}</p>}
           </div>

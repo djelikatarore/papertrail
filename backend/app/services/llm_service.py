@@ -30,6 +30,14 @@ TEXT_MAX_ATTEMPTS = 5
 # than being given up on.
 VISION_MAX_ATTEMPTS = 20
 DEFAULT_RETRY_SECONDS = 25.0
+# Groq's reported Retry-After can be pathologically large under real quota
+# exhaustion — confirmed in practice: "waiting 1409.0s before retry" on a
+# single image, which at VISION_MAX_ATTEMPTS could stall one call for hours.
+# Clamping the wait keeps a rate-limited image bounded (it just gives up
+# sooner and surfaces as a processing_warning instead of stalling the whole
+# paper) while still honoring Groq's real reported wait for the common case
+# (well under a minute).
+MAX_RETRY_WAIT_SECONDS = 60.0
 # Without this, a slow/degraded Groq API response can hang a call indefinitely —
 # confirmed in practice: an upload with just 2 figures froze the entire FastAPI
 # event loop for 10+ minutes on a single stuck call, since upload_paper called
@@ -37,6 +45,20 @@ DEFAULT_RETRY_SECONDS = 25.0
 # bounded APITimeoutError (retried like any other error below, then surfaced as
 # a normal LlmError) instead of an indefinite freeze.
 REQUEST_TIMEOUT_SECONDS = 45
+# Without an explicit cap, the API's own default max output length silently
+# truncated long responses mid-sentence — confirmed in practice: the longer
+# summary format (summary_service.py, 8-14 sentences per block) got cut off
+# partway through the second of four blocks, well before Key Results or
+# Limitations, with no error raised (just a shorter-than-intended response
+# that then failed to parse). 3000 comfortably covers four ~14-sentence
+# blocks plus citation tags and formatting (a real successful run measured
+# ~1750 tokens of actual output) while staying under Groq's 8000 TPM
+# *per-request* ceiling once combined with a near-MAX_PROMPT_CHARS input —
+# 4096 was tried first and pushed a large prompt over that combined limit
+# (a 413, not a rate limit: "Requested 8306, Limit 8000"). Short responses
+# (keywords, paper-type, vision descriptions) are entirely unaffected since
+# this is only an upper bound, not a target length.
+MAX_COMPLETION_TOKENS = 3000
 
 # Async client: these calls now run as real asyncio I/O instead of blocking the
 # worker thread, so a slow Groq response only suspends the one request awaiting
@@ -76,18 +98,20 @@ def _extract_retry_after_seconds(exc: Exception) -> float:
         retry_after = response.headers.get("retry-after")
         if retry_after:
             try:
-                return float(retry_after)
+                return min(float(retry_after), MAX_RETRY_WAIT_SECONDS)
             except ValueError:
                 pass
 
     match = re.search(r"try again in ([\d.]+)s", str(exc))
     if match:
-        return float(match.group(1))
+        return min(float(match.group(1)), MAX_RETRY_WAIT_SECONDS)
 
     return DEFAULT_RETRY_SECONDS
 
 
-async def _call_groq(model: str, messages: list, max_attempts: int, label: str) -> str:
+async def _call_groq(
+    model: str, messages: list, max_attempts: int, label: str, reasoning_effort: str | None = None
+) -> str:
     """Shared retry loop for both text and vision Groq calls. A RateLimitError
     (429) waits the real duration Groq reports instead of a short fixed guess —
     a rate-limited call almost always succeeds on the next attempt once that
@@ -102,13 +126,26 @@ async def _call_groq(model: str, messages: list, max_attempts: int, label: str) 
     switch ever happens per call: if the secondary key later gets rate-limited
     too, it falls back to the normal wait-and-retry behavior on whichever
     client is current, rather than bouncing back and forth between two
-    exhausted keys."""
+    exhausted keys.
+
+    reasoning_effort is left unset (model default) unless the caller passes
+    it — call_llm's GROQ_MODEL (openai/gpt-oss-120b) is a reasoning model
+    that spends completion tokens on an internal, invisible reasoning pass
+    before writing the actual answer. Confirmed in practice: with the longer
+    summary format, the default reasoning depth consumed 2888 of a 3000
+    max_completion_tokens budget, leaving ~100 tokens for the real answer and
+    silently truncating it (finish_reason="length") after little more than
+    the Contribution block. "low" cut that to ~30 reasoning tokens with no
+    loss of a complete, well-formed response."""
     client = _client
     switched_client = False
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            response = await client.chat.completions.create(model=model, messages=messages)
+            kwargs = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
+            response = await client.chat.completions.create(
+                model=model, messages=messages, max_completion_tokens=MAX_COMPLETION_TOKENS, **kwargs
+            )
             return response.choices[0].message.content
         except groq.RateLimitError as exc:
             last_error = exc
@@ -138,7 +175,7 @@ async def call_llm(prompt: str, system_prompt: str | None = None) -> str:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    return await _call_groq(GROQ_MODEL, messages, TEXT_MAX_ATTEMPTS, "LLM")
+    return await _call_groq(GROQ_MODEL, messages, TEXT_MAX_ATTEMPTS, "LLM", reasoning_effort="low")
 
 
 async def call_vision_llm(prompt: str, image_path: str, system_prompt: str | None = None) -> str:

@@ -15,6 +15,49 @@ class PdfExtractionError(Exception):
     pass
 
 
+def _strip_nul_bytes(text: str) -> str:
+    """PyMuPDF's text extraction can emit literal NUL (0x00) characters —
+    confirmed on real papers (StyleGAN, DDPM): pages containing math
+    equations rendered with custom symbol fonts (braces, delimiters) produced
+    a NUL wherever a glyph couldn't be mapped to Unicode. Postgres text
+    columns can't store NUL at all ("A string literal cannot contain NUL
+    (0x00) characters"), which crashed the whole background processing
+    transaction — not just for raw_text, but for every row still pending in
+    that same session, since the flush that discovers the bad byte rolls
+    back everything not yet committed. Stripped here, at the single point
+    all downstream text (raw_text, title, chunks, embeddings) is derived
+    from, rather than re-guarding every individual DB write site."""
+    return text.replace("\x00", "")
+
+
+# Same root cause class as the NUL-byte issue above (a PDF font glyph that
+# doesn't map cleanly to a single Unicode codepoint) but for typeset
+# ligatures instead: many academic-paper PDFs render "ffi"/"fi"/"fl"/"ff"/
+# "ffl" as one combined glyph, which PyMuPDF extracts as its own single
+# Unicode ligature codepoint (U+FB00-FB06) rather than expanding it back to
+# plain ASCII letters. Confirmed in practice: "coefficient" round-tripped as
+# "coeﬃcient" in stored raw_text/chunks, which never byte-matches a
+# citation like "(Source: Adaptive KL Penalty Coefficient)" that an LLM
+# writes back in normal ASCII — wrongly rejecting an otherwise well-grounded
+# summary claim. Expanded here at the same single point as _strip_nul_bytes,
+# so every downstream consumer (chunking, embeddings, citation verification,
+# search, display) sees normal ASCII rather than each needing its own
+# workaround.
+_LIGATURE_NORMALIZATIONS = str.maketrans({
+    "ﬀ": "ff",
+    "ﬁ": "fi",
+    "ﬂ": "fl",
+    "ﬃ": "ffi",
+    "ﬄ": "ffl",
+    "ﬅ": "st",
+    "ﬆ": "st",
+})
+
+
+def _normalize_ligatures(text: str) -> str:
+    return text.translate(_LIGATURE_NORMALIZATIONS)
+
+
 def _is_rotated_sidebar(block, page_width: float, page_height: float) -> bool:
     x0, y0, x1, y1 = block[:4]
     width = x1 - x0
@@ -94,7 +137,7 @@ def _extract_title_from_first_page(page) -> str | None:
     max_size = max(s[0] for s in spans)
     title_spans = sorted((s for s in spans if s[0] >= max_size - 0.5), key=lambda s: s[1])[:TITLE_MAX_LINES]
     title = " ".join(text for _, _, text in title_spans)
-    title = " ".join(title.split())
+    title = " ".join(_normalize_ligatures(_strip_nul_bytes(title)).split())
 
     return title[:TITLE_MAX_CHARS] if len(title) >= TITLE_MIN_CHARS else None
 
@@ -142,7 +185,7 @@ def extract_text(file_path: str) -> tuple[str, int]:
     finally:
         doc.close()
 
-    raw_text = "\n\n".join(t for t in page_texts if t)
+    raw_text = _normalize_ligatures(_strip_nul_bytes("\n\n".join(t for t in page_texts if t)))
 
     if not raw_text.strip():
         if ocr_unavailable:

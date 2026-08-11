@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from app.config.settings import FRONTEND_URL, RESET_TOKEN_EXPIRE_MINUTES
 from app.database import get_db
 from app.models.user import User
+from app.models.workspace_invitation import WorkspaceInvitation
+from app.models.workspace_member import WorkspaceMember
 from app.services.auth_service import create_access_token, hash_password, verify_password
 from app.services.email_service import send_reset_password_email
 from app.utils.auth_dependency import get_current_user
@@ -21,6 +23,7 @@ class SignupRequest(BaseModel):
     full_name: str
     email: EmailStr
     password: str
+    invite_token: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -74,6 +77,24 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
+    # A token that doesn't resolve to a still-pending invitation is treated
+    # as stale/invalid and simply ignored (signup still succeeds, just
+    # without auto-join) — but a token that DOES resolve and was sent to a
+    # different email is rejected outright, since silently joining the
+    # signer-upper to someone else's invited workspace would be wrong.
+    invitation = None
+    if payload.invite_token:
+        invitation = (
+            db.query(WorkspaceInvitation)
+            .filter(WorkspaceInvitation.token == payload.invite_token, WorkspaceInvitation.accepted_at.is_(None))
+            .first()
+        )
+        if invitation and invitation.email.lower() != payload.email.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This invitation was sent to a different email address.",
+            )
+
     user = User(
         full_name=payload.full_name.strip(),
         email=payload.email,
@@ -83,6 +104,19 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    if invitation:
+        db.add(
+            WorkspaceMember(
+                workspace_id=invitation.workspace_id,
+                user_id=user.id,
+                role="MEMBER",
+                joined_at=datetime.now(timezone.utc).isoformat(),
+            )
+        )
+        invitation.accepted_at = datetime.now(timezone.utc).isoformat()
+        db.commit()
+
     return user
 
 

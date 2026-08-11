@@ -8,8 +8,20 @@ export function listWorkspaces() {
   return apiClient.get("/workspaces").then((res) => res.data);
 }
 
+export function updateWorkspace(workspaceId, { name, description }) {
+  return apiClient.put(`/workspaces/${workspaceId}`, { name, description }).then((res) => res.data);
+}
+
+export function deleteWorkspace(workspaceId) {
+  return apiClient.delete(`/workspaces/${workspaceId}`);
+}
+
 export function listMembers(workspaceId) {
   return apiClient.get(`/workspaces/${workspaceId}/members`).then((res) => res.data);
+}
+
+export function removeMember(workspaceId, memberId) {
+  return apiClient.delete(`/workspaces/${workspaceId}/members/${memberId}`);
 }
 
 export function listProjects(workspaceId, { page = 1, limit = 20 } = {}) {
@@ -30,6 +42,10 @@ export function getInviteLink(workspaceId) {
 
 export function inviteByEmail(workspaceId, email) {
   return apiClient.post(`/workspaces/${workspaceId}/invite`, { email }).then((res) => res.data);
+}
+
+export function getInvitationPreview(token) {
+  return apiClient.get(`/workspaces/invitations/${token}`).then((res) => res.data);
 }
 
 export function joinWorkspace(token) {

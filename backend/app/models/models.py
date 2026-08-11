@@ -37,6 +37,13 @@ class Paper(Base):
 
     error_message = Column(String, nullable=True)
 
+    # Non-fatal: set when the paper still reaches READY but one or more AI
+    # steps (summary/keywords/paper-type detection, figure descriptions)
+    # degraded gracefully after exhausting Groq retries — see
+    # _build_processing_warning in paper_router.py. Distinct from
+    # error_message, which is only ever set alongside status="ERROR".
+    processing_warning = Column(String, nullable=True)
+
     status = Column(
         String,
         default="PROCESSING"

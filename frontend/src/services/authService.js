@@ -1,8 +1,8 @@
 import apiClient from "./apiClient";
 
-export function signup({ fullName, email, password }) {
+export function signup({ fullName, email, password, inviteToken }) {
   return apiClient
-    .post("/auth/signup", { full_name: fullName, email, password })
+    .post("/auth/signup", { full_name: fullName, email, password, invite_token: inviteToken ?? null })
     .then((res) => res.data);
 }
 

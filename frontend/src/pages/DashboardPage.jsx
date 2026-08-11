@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import ErrorBanner from "../components/ErrorBanner";
+import Modal from "../components/Modal";
 import ProjectCard from "../components/ProjectCard";
 import { useAuth } from "../context/AuthContext";
 import { createWorkspace, listProjects, listWorkspaces } from "../services/workspaceService";
@@ -18,6 +19,7 @@ export default function DashboardPage() {
   const [projectsTotal, setProjectsTotal] = useState(0);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
 
   useEffect(() => {
     load();
@@ -51,6 +53,7 @@ export default function DashboardPage() {
     try {
       await createWorkspace({ name: newWorkspaceName.trim() });
       setNewWorkspaceName("");
+      setShowCreateWorkspace(false);
       load();
     } catch {
       setError("Could not create workspace. Please try again.");
@@ -113,6 +116,9 @@ export default function DashboardPage() {
               {user ? `Welcome back, ${user.full_name}` : ""}
             </p>
           </div>
+          <button type="button" onClick={() => setShowCreateWorkspace(true)} className="btn-primary px-4 py-2">
+            <Plus size={15} /> Create Workspace
+          </button>
         </div>
 
         {error && (
@@ -163,6 +169,42 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {showCreateWorkspace && (
+        <Modal onClose={() => (creatingWorkspace ? null : setShowCreateWorkspace(false))}>
+          <h3 className="mb-6 pr-6 text-lg font-bold text-text">Create Workspace</h3>
+          <form onSubmit={handleCreateWorkspace} className="flex flex-col gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-text">Workspace name</label>
+              <input
+                type="text"
+                value={newWorkspaceName}
+                onChange={(e) => setNewWorkspaceName(e.target.value)}
+                placeholder="e.g. MIT Research Lab"
+                className="w-full rounded-lg border border-border px-3.5 py-2 text-sm"
+              />
+            </div>
+            {error && <ErrorBanner message={error} />}
+            <div className="mt-2 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowCreateWorkspace(false)}
+                disabled={creatingWorkspace}
+                className="btn-secondary flex-1 py-2.5"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!newWorkspaceName.trim() || creatingWorkspace}
+                className="btn-primary flex-1 py-2.5"
+              >
+                {creatingWorkspace ? "Creating..." : "Create Workspace"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </AppShell>
   );
 }
