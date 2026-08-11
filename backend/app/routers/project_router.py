@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, aliased
 
-from app.config.settings import DRAFT_PDF_DIR, OFF_TOPIC_SIMILARITY_THRESHOLD, UPLOAD_DIR
+from app.config.settings import DRAFT_PDF_DIR, OFF_TOPIC_SIMILARITY_THRESHOLD, UPLOAD_DIR, VALID_PROJECT_STATUSES
 from app.database import get_db
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
@@ -750,6 +750,12 @@ def update_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if payload.status is not None and payload.status not in VALID_PROJECT_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"status must be one of: {', '.join(sorted(VALID_PROJECT_STATUSES))}",
+        )
+
     get_workspace_or_404(workspace_id, db)
     membership = require_member(workspace_id, current_user.id, db)
     project = _get_project_or_404(workspace_id, project_id, db)
@@ -765,6 +771,43 @@ def update_project(
     return project
 
 
+class UpdateProjectStatusRequest(BaseModel):
+    status: str
+
+
+@router.patch("/{project_id}/status", response_model=ProjectResponse)
+def update_project_status(
+    workspace_id: int,
+    project_id: int,
+    payload: UpdateProjectStatusRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Same permission tier as update_project (any member with access to this
+    project, not owner-only) — archiving/unarchiving is a reversible,
+    non-destructive organizational toggle, not the kind of action (delete,
+    manage-access) this codebase otherwise reserves for the workspace owner.
+    Purely a visual/organizational marker: an archived project keeps working
+    normally (upload, Q&A, everything) — see ProjectCard.jsx on the frontend
+    for the "still fully usable, just visually muted" treatment."""
+    if payload.status not in VALID_PROJECT_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"status must be one of: {', '.join(sorted(VALID_PROJECT_STATUSES))}",
+        )
+
+    get_workspace_or_404(workspace_id, db)
+    membership = require_member(workspace_id, current_user.id, db)
+    project = _get_project_or_404(workspace_id, project_id, db)
+    require_project_access(project_id, membership, db)
+
+    project.status = payload.status
+    db.commit()
+    db.refresh(project)
+
+    return project
+
+
 def _delete_file_if_exists(path: str | None) -> None:
     if path and os.path.exists(path):
         try:
@@ -773,28 +816,15 @@ def _delete_file_if_exists(path: str | None) -> None:
             safe_log(f"[project_router] Failed to delete file {path}: {exc}")
 
 
-@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_project(
-    workspace_id: int,
-    project_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Deletes a project and everything that belongs only to it: papers (and
-    their text blocks, visual elements, and uploaded PDF files), drafts (and
-    their review comments and generated PDF files), and this project's chat
-    history (the project-wide comparative session plus every per-paper
-    session). workspace_members and the workspace itself are untouched."""
-    workspace = get_workspace_or_404(workspace_id, db)
-    require_member(workspace_id, current_user.id, db)
-    project = _get_project_or_404(workspace_id, project_id, db)
-
-    if workspace.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the workspace owner can delete a project",
-        )
-
+def cascade_delete_project_contents(db: Session, project_id: int) -> None:
+    """Deletes everything that belongs only to this project: papers (and their
+    text blocks, visual elements, and uploaded PDF files), drafts (and their
+    review comments and generated PDF files), and this project's chat history
+    (the project-wide comparative session plus every per-paper session).
+    Leaves the Project row itself and anything above it (workspace_members,
+    the workspace) untouched — the caller deletes those as appropriate for
+    its own scope (a single project, or every project as part of deleting the
+    whole workspace — see workspace_router.delete_workspace)."""
     paper_ids = [pid for (pid,) in db.query(Paper.id).filter(Paper.project_id == project_id).all()]
     draft_ids = [did for (did,) in db.query(DraftDocument.id).filter(DraftDocument.project_id == project_id).all()]
 
@@ -839,6 +869,29 @@ def delete_project(
     db.query(ProjectAccessRestriction).filter(ProjectAccessRestriction.project_id == project_id).delete(
         synchronize_session=False
     )
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(
+    workspace_id: int,
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Deletes a project and everything that belongs only to it — see
+    cascade_delete_project_contents. workspace_members and the workspace
+    itself are untouched."""
+    workspace = get_workspace_or_404(workspace_id, db)
+    require_member(workspace_id, current_user.id, db)
+    project = _get_project_or_404(workspace_id, project_id, db)
+
+    if workspace.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workspace owner can delete a project",
+        )
+
+    cascade_delete_project_contents(db, project_id)
 
     db.delete(project)
     db.commit()
