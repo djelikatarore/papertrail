@@ -33,12 +33,8 @@ export default function InviteModal({ workspaceId, onClose }) {
     setEmailError(null);
     setEmailSuccess(null);
     try {
-      const result = await inviteByEmail(workspaceId, email.trim());
-      setEmailSuccess(
-        result.status === "invited"
-          ? `${email.trim()} doesn't have an account yet — an invitation email was sent.`
-          : `${email.trim()} has been added to this workspace.`
-      );
+      await inviteByEmail(workspaceId, email.trim());
+      setEmailSuccess(`Invitation sent to ${email.trim()} — they'll join once they accept it.`);
       setEmail("");
     } catch (err) {
       const status = err.response?.status;
@@ -61,8 +57,8 @@ export default function InviteModal({ workspaceId, onClose }) {
       <form onSubmit={handleInvite} className="mb-6">
         <label className="mb-1 block text-sm font-semibold text-text">Invite by email</label>
         <p className="mb-2 text-xs text-muted">
-          Adds them right away if they already have a PaperTrail account, otherwise sends them an invitation
-          email to create one and join automatically.
+          Sends an invitation email either way — they'll join once they accept it, whether or not they
+          already have a PaperTrail account.
         </p>
         <div className="flex gap-2">
           <input

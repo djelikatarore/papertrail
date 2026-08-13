@@ -1,12 +1,13 @@
 import { Layers, Pencil, Trash2 } from "lucide-react";
 import { getProjectColor } from "../utils/projectColors";
 
-// Same visual pattern as ProjectCard — color derived from id since neither
-// entity has a backend color field. onRename/onDelete are optional (only the
-// owner can act on a workspace, so a caller viewing a workspace they don't
-// own simply omits them, same as PaperCard's optional onDelete).
-export default function WorkspaceCard({ workspace, active, onClick, onRename, onDelete }) {
-  const color = getProjectColor(workspace.id);
+// Same visual pattern as ProjectCard — color derived from the card's
+// position in the current list, not its id (see getProjectColor).
+// onRename/onDelete are optional (only the owner can act on a workspace, so
+// a caller viewing a workspace they don't own simply omits them, same as
+// PaperCard's optional onDelete).
+export default function WorkspaceCard({ workspace, index = 0, active, onClick, onRename, onDelete }) {
+  const color = getProjectColor(index);
   const isOwner = workspace.role === "OWNER";
 
   return (

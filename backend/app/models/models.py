@@ -240,6 +240,14 @@ class VisualElement(Base):
         nullable=True
     )
 
+    # Best-effort "Figure 3"/"Table 2" caption label, matched by proximity to
+    # the image on its page (see visual_extraction_service._find_figure_reference).
+    # None when no matching caption was found nearby.
+    figure_reference = Column(
+        String,
+        nullable=True
+    )
+
     paper = relationship(
         "Paper",
         back_populates="visual_elements"

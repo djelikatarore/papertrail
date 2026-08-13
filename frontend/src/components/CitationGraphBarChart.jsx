@@ -1,5 +1,3 @@
-const WIDTH = 760;
-const HEIGHT = 420;
 const PADDING_X = 40;
 const PADDING_TOP = 30;
 const PADDING_BOTTOM = 70;
@@ -17,7 +15,13 @@ function truncate(text, max) {
 // null when no confident CrossRef match was found (or the lookup hasn't run
 // yet), which is shown distinctly (gray bar, "Not found" label) rather than
 // being treated as 0 citations — those are two very different things.
-export default function CitationGraphBarChart({ nodes, onNodeClick }) {
+//
+// width/height default to the standalone Citation Graph page's original
+// size; callers embedding this inline in a smaller space (e.g. the Library
+// page's expandable section) can pass smaller values instead.
+export default function CitationGraphBarChart({ nodes, onNodeClick, width = 760, height = 420 }) {
+  const WIDTH = width;
+  const HEIGHT = height;
   if (nodes.length === 0) {
     return (
       <div className="py-16 text-center text-muted">

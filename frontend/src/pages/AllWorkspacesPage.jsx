@@ -1,4 +1,4 @@
-import { Search } from "lucide-react";
+import { LayoutGrid, List, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "../components/AppShell";
@@ -6,7 +6,7 @@ import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import ErrorBanner from "../components/ErrorBanner";
 import Modal from "../components/Modal";
 import WorkspaceCard from "../components/WorkspaceCard";
-import { deleteWorkspace, listWorkspaces, updateWorkspace } from "../services/workspaceService";
+import { createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../services/workspaceService";
 
 const SORT_OPTIONS = [
   { value: "recent", label: "Most recent" },
@@ -21,6 +21,7 @@ export default function AllWorkspacesPage() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("recent");
+  const [viewMode, setViewMode] = useState("grid"); // "grid" | "horizontal"
 
   const [renamingWorkspace, setRenamingWorkspace] = useState(null);
   const [renameValue, setRenameValue] = useState("");
@@ -30,6 +31,11 @@ export default function AllWorkspacesPage() {
   const [deletingWorkspace, setDeletingWorkspace] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [createError, setCreateError] = useState(null);
 
   useEffect(() => {
     load();
@@ -58,10 +64,27 @@ export default function AllWorkspacesPage() {
       const updated = await updateWorkspace(renamingWorkspace.id, { name: renameValue.trim() });
       setWorkspaces((prev) => prev.map((w) => (w.id === updated.id ? { ...w, name: updated.name } : w)));
       setRenamingWorkspace(null);
-    } catch {
-      setRenameError("Could not rename this workspace. Please try again.");
+    } catch (err) {
+      setRenameError(err.response?.data?.detail ?? "Could not rename this workspace. Please try again.");
     } finally {
       setRenaming(false);
+    }
+  }
+
+  async function handleCreateWorkspace(event) {
+    event.preventDefault();
+    if (!newWorkspaceName.trim() || creatingWorkspace) return;
+    setCreatingWorkspace(true);
+    setCreateError(null);
+    try {
+      await createWorkspace({ name: newWorkspaceName.trim() });
+      setNewWorkspaceName("");
+      setShowCreateWorkspace(false);
+      load();
+    } catch (err) {
+      setCreateError(err.response?.data?.detail ?? "Could not create workspace. Please try again.");
+    } finally {
+      setCreatingWorkspace(false);
     }
   }
 
@@ -95,6 +118,12 @@ export default function AllWorkspacesPage() {
   return (
     <AppShell title="All Workspaces" subtitle={`${workspaces.length} workspaces`}>
       <div className="p-10">
+        <div className="mb-6 flex justify-end">
+          <button type="button" onClick={() => setShowCreateWorkspace(true)} className="btn-primary px-4 py-2">
+            <Plus size={15} /> Create Workspace
+          </button>
+        </div>
+
         <div className="mb-6 flex gap-2.5">
           <div className="relative flex-1">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
@@ -117,6 +146,30 @@ export default function AllWorkspacesPage() {
               </option>
             ))}
           </select>
+          <div className="flex gap-1 rounded-xl border border-border p-1">
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              aria-label="Grid view"
+              aria-pressed={viewMode === "grid"}
+              className={`rounded-lg p-1.5 transition-colors ${
+                viewMode === "grid" ? "bg-accent-light text-accent" : "text-muted hover:text-text"
+              }`}
+            >
+              <LayoutGrid size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("horizontal")}
+              aria-label="Horizontal list view"
+              aria-pressed={viewMode === "horizontal"}
+              className={`rounded-lg p-1.5 transition-colors ${
+                viewMode === "horizontal" ? "bg-accent-light text-accent" : "text-muted hover:text-text"
+              }`}
+            >
+              <List size={16} />
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -131,16 +184,35 @@ export default function AllWorkspacesPage() {
           </p>
         )}
 
-        <div className="grid grid-cols-3 gap-4">
-          {visibleWorkspaces.map((w) => (
-            <WorkspaceCard
-              key={w.id}
-              workspace={w}
-              onClick={() => navigate(`/workspaces/${w.id}`)}
-              onRename={openRename}
-              onDelete={setDeletingWorkspace}
-            />
-          ))}
+        <div
+          className={
+            viewMode === "grid"
+              ? "grid grid-cols-3 items-start gap-4"
+              : "flex items-start gap-4 overflow-x-auto pb-2"
+          }
+        >
+          {visibleWorkspaces.map((w, index) =>
+            viewMode === "horizontal" ? (
+              <div key={w.id} className="w-64 shrink-0">
+                <WorkspaceCard
+                  workspace={w}
+                  index={index}
+                  onClick={() => navigate(`/workspaces/${w.id}`)}
+                  onRename={openRename}
+                  onDelete={setDeletingWorkspace}
+                />
+              </div>
+            ) : (
+              <WorkspaceCard
+                key={w.id}
+                workspace={w}
+                index={index}
+                onClick={() => navigate(`/workspaces/${w.id}`)}
+                onRename={openRename}
+                onDelete={setDeletingWorkspace}
+              />
+            ),
+          )}
         </div>
       </div>
 
@@ -173,6 +245,42 @@ export default function AllWorkspacesPage() {
                 className="btn-primary flex-1 py-2.5"
               >
                 {renaming ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {showCreateWorkspace && (
+        <Modal onClose={() => (creatingWorkspace ? null : setShowCreateWorkspace(false))}>
+          <h3 className="mb-6 pr-6 text-lg font-bold text-text">Create Workspace</h3>
+          <form onSubmit={handleCreateWorkspace} className="flex flex-col gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-text">Workspace name</label>
+              <input
+                type="text"
+                value={newWorkspaceName}
+                onChange={(e) => setNewWorkspaceName(e.target.value)}
+                placeholder="e.g. MIT Research Lab"
+                className="w-full rounded-lg border border-border px-3.5 py-2 text-sm"
+              />
+            </div>
+            {createError && <ErrorBanner message={createError} />}
+            <div className="mt-2 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowCreateWorkspace(false)}
+                disabled={creatingWorkspace}
+                className="btn-secondary flex-1 py-2.5"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!newWorkspaceName.trim() || creatingWorkspace}
+                className="btn-primary flex-1 py-2.5"
+              >
+                {creatingWorkspace ? "Creating..." : "Create Workspace"}
               </button>
             </div>
           </form>

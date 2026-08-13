@@ -1,21 +1,15 @@
 import {
-  ChevronRight,
   FileText,
   FolderOpen,
   LayoutDashboard,
   MessageSquare,
-  Network,
   PenTool,
   Search,
   Settings,
   Sparkles,
   Upload,
 } from "lucide-react";
-import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { listWorkspaces } from "../services/workspaceService";
-
-const RECENT_WORKSPACES_LIMIT = 5;
 
 // Upload Paper / Similar Papers / Draft Generation / Draft Review are real,
 // working screens — but each needs a project (and Similar Papers also a
@@ -31,7 +25,7 @@ const SECTIONS = (workspaceId, projectId, paperId) => [
     label: "Workspace",
     items: [
       { label: "Dashboard", icon: LayoutDashboard, to: "/dashboard" },
-      { label: "Projects", icon: FolderOpen, to: `/workspaces/${workspaceId}` },
+      { label: "Workspace", icon: FolderOpen, to: "/workspaces" },
     ],
   },
   {
@@ -54,12 +48,6 @@ const SECTIONS = (workspaceId, projectId, paperId) => [
         icon: Search,
         to: paperId ? `/workspaces/${workspaceId}/projects/${projectId}/papers/${paperId}/similar` : undefined,
         inert: !paperId,
-      },
-      {
-        label: "Citation Graph",
-        icon: Network,
-        to: projectId ? `/workspaces/${workspaceId}/projects/${projectId}/citation-graph` : undefined,
-        inert: !projectId,
       },
     ],
   },
@@ -87,26 +75,19 @@ export default function Sidebar({ workspaceId }) {
   const navigate = useNavigate();
   const { projectId, paperId } = useParams();
   const sections = SECTIONS(workspaceId, projectId, paperId);
-  const [workspaces, setWorkspaces] = useState([]);
-
-  useEffect(() => {
-    listWorkspaces()
-      .then(setWorkspaces)
-      .catch(() => setWorkspaces([]));
-  }, []);
-
-  const recentWorkspaces = [...workspaces]
-    .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
-    .slice(0, RECENT_WORKSPACES_LIMIT);
 
   return (
     <aside className="flex h-screen w-[228px] shrink-0 flex-col bg-sidebar">
-      <div className="flex items-center gap-2.5 px-5 pb-4 pt-6">
+      <button
+        type="button"
+        onClick={() => navigate("/dashboard")}
+        className="flex items-center gap-2.5 px-5 pb-4 pt-6 text-left"
+      >
         <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent shadow-[0_8px_24px_-4px_rgba(124,58,237,0.35)]">
           <FileText size={16} color="#fff" strokeWidth={1.5} />
         </div>
         <span className="text-base font-bold tracking-tight text-white">PaperTrail</span>
-      </div>
+      </button>
 
       <div className="px-4 pb-2">
         <button
@@ -118,37 +99,6 @@ export default function Sidebar({ workspaceId }) {
           <span className="flex-1 text-xs text-white/30">Search workspaces…</span>
         </button>
       </div>
-
-      {recentWorkspaces.length > 0 && (
-        <div className="px-3 pb-1">
-          <p className="mb-1.5 ml-2 text-[10px] font-bold uppercase tracking-wider text-white/22">Workspaces</p>
-          {recentWorkspaces.map((w) => {
-            const active = String(w.id) === String(workspaceId);
-            return (
-              <button
-                key={w.id}
-                type="button"
-                onClick={() => navigate(`/workspaces/${w.id}`)}
-                className={`mb-0.5 flex w-full items-center truncate rounded-xl px-2.5 py-2 text-left text-[13.5px] transition-colors ${
-                  active
-                    ? "bg-sidebar-active font-semibold text-[#DDD6FE]"
-                    : "text-white/50 hover:bg-sidebar-hover hover:text-white/80"
-                }`}
-                title={w.name}
-              >
-                <span className="truncate">{w.name}</span>
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            onClick={() => navigate("/workspaces")}
-            className="mb-0.5 flex w-full items-center gap-1 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-white/35 transition-colors hover:text-white/60"
-          >
-            See all workspaces <ChevronRight size={12} />
-          </button>
-        </div>
-      )}
 
       <nav className="no-scrollbar flex-1 overflow-auto px-3 pb-3 pt-2">
         {sections.map((section) => (

@@ -9,9 +9,6 @@ backend/uploads/
 backend/visual_elements/
 backend/draft_pdfs/
 
-# FAISS index (regenerated from DB embeddings, not source data)
-backend/faiss_index.bin
-
 # Local backups (pg_dump, pre-migration snapshots) — never committed
 backend/backups/
 backend/*.db.backup*
@@ -22,7 +19,7 @@ backend/*.db.backup*
 # Environment variables
 .env
 
-# Node (frontend, pour plus tard)
+# Node (frontend)
 node_modules/
 dist/
 

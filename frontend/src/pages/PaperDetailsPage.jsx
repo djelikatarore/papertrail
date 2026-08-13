@@ -1,5 +1,5 @@
 import { Download, ExternalLink, Eye, MessageSquare, Search, Send, Sparkles, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import AuthenticatedImage from "../components/AuthenticatedImage";
@@ -11,7 +11,7 @@ import PaperTypeBadge from "../components/PaperTypeBadge";
 import PdfViewerModal from "../components/PdfViewerModal";
 import ReviewTypeBadge from "../components/ReviewTypeBadge";
 import SimilarityPanel from "../components/SimilarityPanel";
-import { StatusPill } from "../components/StatusBadge";
+import { StatusPill, SummaryProgress } from "../components/StatusBadge";
 import WarningBanner from "../components/WarningBanner";
 import {
   askQuestion,
@@ -82,6 +82,7 @@ export default function PaperDetailsPage() {
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [warningDeleting, setWarningDeleting] = useState(false);
   const [warningDeleteError, setWarningDeleteError] = useState(null);
+  const pollRef = useRef(null);
 
   useEffect(() => {
     setLoading(true);
@@ -110,6 +111,31 @@ export default function PaperDetailsPage() {
       .catch(() => setOwnerCheckFailed(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, projectId, paperId]);
+
+  // While the paper is still processing in the background, poll for updates
+  // so this page doesn't sit frozen on a stale "Processing" pill and instead
+  // flips to the real summary content as soon as it's ready. The
+  // Processing -> Ready/Error transition itself is announced by the
+  // app-wide NotificationProvider (see context/NotificationContext.jsx),
+  // not here.
+  useEffect(() => {
+    clearInterval(pollRef.current);
+    if (paper?.status !== "PROCESSING") return undefined;
+
+    pollRef.current = setInterval(() => {
+      getPaper(paperId)
+        .then((updated) => {
+          setPaper(updated);
+          if (updated.status !== "PROCESSING") {
+            clearInterval(pollRef.current);
+          }
+        })
+        .catch(() => clearInterval(pollRef.current));
+    }, 4000);
+
+    return () => clearInterval(pollRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paper?.status, paperId]);
 
   // Shown once per paper — "Keep it anyway" (or the modal's own close button)
   // marks it seen in localStorage so it doesn't nag again on a later visit.
@@ -148,6 +174,7 @@ export default function PaperDetailsPage() {
   // gallery with placeholder "no description" cards — see paper_router.py's
   // VISION_CALL_CAP.
   const describedVisualElements = paper.visual_elements.filter((ve) => ve.ai_description);
+  const hiddenFigureCount = paper.visual_elements.length - describedVisualElements.length;
 
   async function handleDownload() {
     if (downloading) return;
@@ -289,27 +316,42 @@ export default function PaperDetailsPage() {
             ))}
           </div>
           <div className="p-7">
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">
-              {paper[summaryTab] ?? "Not available."}
-            </p>
+            {paper.status === "PROCESSING" ? (
+              <SummaryProgress startedAt={paper.upload_date} />
+            ) : (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">
+                {paper[summaryTab] ?? "Not available."}
+              </p>
+            )}
           </div>
         </div>
 
-        {describedVisualElements.length > 0 && (
+        {(describedVisualElements.length > 0 || hiddenFigureCount > 0) && (
           <div className="mb-6 rounded-[var(--radius-card-lg)] border border-border bg-card p-6 shadow-card">
             <p className="mb-4 text-sm font-bold text-text">Figures</p>
-            <div className="grid grid-cols-3 gap-4">
-              {describedVisualElements.map((ve) => (
-                <div key={ve.id}>
-                  <AuthenticatedImage
-                    src={`/papers/${paperId}/visual-elements/${ve.id}/image`}
-                    alt={ve.ai_description}
-                    className="mb-2 h-32 w-full rounded-xl border border-border object-cover"
-                  />
-                  <p className="text-xs leading-snug text-muted">{ve.ai_description}</p>
-                </div>
-              ))}
-            </div>
+            {describedVisualElements.length > 0 && (
+              <div className="grid grid-cols-3 gap-4">
+                {describedVisualElements.map((ve) => (
+                  <div key={ve.id}>
+                    <AuthenticatedImage
+                      src={`/papers/${paperId}/visual-elements/${ve.id}/image`}
+                      alt={ve.ai_description}
+                      className="mb-2 h-32 w-full rounded-xl border border-border object-cover"
+                    />
+                    {ve.figure_reference && (
+                      <p className="text-xs font-semibold text-text">{ve.figure_reference}</p>
+                    )}
+                    <p className="text-xs leading-snug text-muted">{ve.ai_description}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {hiddenFigureCount > 0 && (
+              <p className={describedVisualElements.length > 0 ? "mt-4 text-xs text-muted" : "text-xs text-muted"}>
+                {hiddenFigureCount} figure{hiddenFigureCount === 1 ? "" : "s"} could not be automatically
+                described and {hiddenFigureCount === 1 ? "is" : "are"} not shown here.
+              </p>
+            )}
           </div>
         )}
 

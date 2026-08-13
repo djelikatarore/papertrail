@@ -147,7 +147,7 @@ export default function SettingsPage() {
 
   return (
     <AppShell title="Settings" subtitle="Manage your account and preferences">
-      <div className="max-w-2xl p-10">
+      <div className="p-10">
         <div className="mb-7 flex w-fit gap-1 rounded-xl bg-app-bg p-1">
           {TABS.map((t) => (
             <button

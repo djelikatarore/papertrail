@@ -16,6 +16,7 @@ import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
 import SignupPage from "./pages/SignupPage";
 import SimilarPapersPage from "./pages/SimilarPapersPage";
+import VerifyEmailPage from "./pages/VerifyEmailPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import WorkspaceSettingsPage from "./pages/WorkspaceSettingsPage";
 
@@ -26,6 +27,7 @@ export default function App() {
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
 
       <Route element={<ProtectedRoute />}>
         <Route path="/dashboard" element={<DashboardPage />} />

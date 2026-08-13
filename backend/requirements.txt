@@ -4,16 +4,15 @@ python-multipart
 sqlalchemy
 psycopg2-binary
 pgvector
-alembic
 pymupdf
 bcrypt
 pyjwt
 python-dotenv
 email-validator
-resend
 groq
 pytesseract
 pillow
 sentence-transformers
 requests
 fpdf2
+google-auth

@@ -2,19 +2,22 @@ import { FileText, GitBranch, MessageSquare, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import ErrorBanner from "../components/ErrorBanner";
+import GoogleSignInButton from "../components/GoogleSignInButton";
 import PasswordInput from "../components/PasswordInput";
 import { useAuth } from "../context/AuthContext";
 import useClearSensitiveFieldsOnRestore from "../hooks/useClearSensitiveFieldsOnRestore";
-import { getCurrentUser, login } from "../services/authService";
-import { setToken } from "../services/tokenStore";
+import { getCurrentUser, login, loginWithGoogle } from "../services/authService";
+import { clearRememberedEmail, getRememberedEmail, setRememberedEmail, setToken } from "../services/tokenStore";
 import { isValidEmail } from "../utils/emailValidation";
+import { acceptInvitation, getInvitationPreview } from "../services/workspaceService";
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const { login: setAuth } = useAuth();
   const [searchParams] = useSearchParams();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(getRememberedEmail);
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -28,6 +31,72 @@ export default function LoginPage() {
   // typing, so it can't linger and be confused with a fresh submit's result.
   const [sessionExpired, setSessionExpired] = useState(searchParams.get("sessionExpired") === "1");
   const redirect = searchParams.get("redirect");
+  const inviteToken = searchParams.get("invite");
+
+  const [pendingInvitation, setPendingInvitation] = useState(null);
+  const [showInviteConfirm, setShowInviteConfirm] = useState(false);
+  const [inviteActing, setInviteActing] = useState(false);
+  const [inviteActionError, setInviteActionError] = useState(null);
+
+  // Only reached when ?invite= is present — normal login (no invite param)
+  // always takes the plain navigate(redirect || "/dashboard") branch below,
+  // completely unchanged. An invalid/already-used invitation on this URL
+  // doesn't block login — it just falls through to the normal destination
+  // instead of showing a confirmation for an invitation that no longer exists.
+  async function afterLoginSuccess() {
+    if (inviteToken) {
+      try {
+        const preview = await getInvitationPreview(inviteToken);
+        setPendingInvitation(preview);
+        setShowInviteConfirm(true);
+        return;
+      } catch {
+        // fall through to normal navigation below
+      }
+    }
+    navigate(redirect || "/dashboard");
+  }
+
+  async function handleAcceptInvitation() {
+    setInviteActing(true);
+    setInviteActionError(null);
+    try {
+      const res = await acceptInvitation(inviteToken);
+      navigate(`/workspaces/${res.workspace_id}`);
+    } catch (err) {
+      setInviteActionError(err.response?.data?.detail ?? "Could not accept this invitation. Please try again.");
+    } finally {
+      setInviteActing(false);
+    }
+  }
+
+  function handleSkipInvitation() {
+    navigate(redirect || "/dashboard");
+  }
+
+  function signupUrlWithParams() {
+    const params = new URLSearchParams();
+    if (redirect) params.set("redirect", redirect);
+    if (inviteToken) params.set("invite", inviteToken);
+    const qs = params.toString();
+    return qs ? `/signup?${qs}` : "/signup";
+  }
+
+  async function handleGoogleToken(idToken) {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const { access_token: token } = await loginWithGoogle(idToken);
+      setToken(token, true);
+      const user = await getCurrentUser();
+      setAuth(token, user, true);
+      await afterLoginSuccess();
+    } catch (err) {
+      setError(err.response?.data?.detail ?? "Google sign-in failed. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -55,10 +124,15 @@ export default function LoginPage() {
 
     try {
       // getCurrentUser needs the token in place before its own request fires.
-      setToken(token);
+      setToken(token, rememberMe);
+      if (rememberMe) {
+        setRememberedEmail(email);
+      } else {
+        clearRememberedEmail();
+      }
       const user = await getCurrentUser();
-      setAuth(token, user);
-      navigate(redirect || "/dashboard");
+      setAuth(token, user, rememberMe);
+      await afterLoginSuccess();
     } catch {
       // Credentials were genuinely correct (login succeeded) — a failure here
       // is a different, real problem (e.g. the API being unreachable), so it
@@ -67,6 +141,43 @@ export default function LoginPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (showInviteConfirm && pendingInvitation) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-app-bg p-8">
+        <div className="w-full max-w-sm rounded-[var(--radius-card-lg)] border border-border bg-card p-8 text-center shadow-card">
+          <h1 className="mb-3 text-2xl font-bold tracking-tight text-text">You've been invited</h1>
+          <p className="mb-6 text-sm text-muted">
+            You've been invited to join{" "}
+            <strong className="text-text">{pendingInvitation.workspace_name}</strong>.
+          </p>
+          {inviteActionError && (
+            <div className="mb-4 text-left">
+              <ErrorBanner message={inviteActionError} />
+            </div>
+          )}
+          <div className="flex gap-2.5">
+            <button
+              type="button"
+              onClick={handleSkipInvitation}
+              disabled={inviteActing}
+              className="btn-secondary flex-1 py-2.5"
+            >
+              Skip
+            </button>
+            <button
+              type="button"
+              onClick={handleAcceptInvitation}
+              disabled={inviteActing}
+              className="btn-primary flex-1 py-2.5"
+            >
+              {inviteActing ? "Joining..." : "Accept"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const features = [
@@ -128,6 +239,16 @@ export default function LoginPage() {
             </div>
           )}
 
+          <div className="mb-5">
+            <GoogleSignInButton onToken={handleGoogleToken} onError={setError} />
+          </div>
+
+          <div className="mb-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs text-muted">or</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
           <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
             <div>
               <label className="mb-1.5 block text-sm font-semibold text-text">Email</label>
@@ -164,6 +285,16 @@ export default function LoginPage() {
               />
             </div>
 
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
+              />
+              Remember me
+            </label>
+
             {error && <ErrorBanner message={error} />}
 
             <button
@@ -177,10 +308,7 @@ export default function LoginPage() {
 
           <p className="mt-6 text-center text-sm text-muted">
             No account?{" "}
-            <Link
-              to={redirect ? `/signup?redirect=${encodeURIComponent(redirect)}` : "/signup"}
-              className="font-semibold text-accent"
-            >
+            <Link to={signupUrlWithParams()} className="font-semibold text-accent">
               Sign up
             </Link>
           </p>

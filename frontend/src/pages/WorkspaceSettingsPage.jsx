@@ -108,6 +108,7 @@ export default function WorkspaceSettingsPage() {
   const [tab, setTab] = useState("members");
   const [isOwner, setIsOwner] = useState(false);
   const [workspaceName, setWorkspaceName] = useState(null);
+  const [workspaceCreatedAt, setWorkspaceCreatedAt] = useState(null);
 
   useEffect(() => {
     listWorkspaces()
@@ -115,13 +116,20 @@ export default function WorkspaceSettingsPage() {
         const current = workspaces.find((w) => String(w.id) === String(workspaceId));
         setIsOwner(current?.role === "OWNER");
         setWorkspaceName(current?.name ?? null);
+        setWorkspaceCreatedAt(current?.created_at ?? null);
       })
       .catch(() => {});
   }, [workspaceId]);
 
   return (
     <AppShell workspaceId={workspaceId} title="Workspace Settings" subtitle={workspaceName}>
-      <div className="max-w-2xl p-10">
+      <div className="p-10">
+        {workspaceCreatedAt && (
+          <p className="mb-4 text-xs text-muted">
+            Created {new Date(workspaceCreatedAt).toLocaleDateString()}
+          </p>
+        )}
+
         <div className="mb-7 flex w-fit gap-1 rounded-xl bg-app-bg p-1">
           {TABS.map((t) => (
             <button

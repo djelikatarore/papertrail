@@ -1,4 +1,5 @@
 import os
+import tempfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -17,6 +18,7 @@ from app.services.draft_generation_service import generate_draft_content
 from app.services.draft_pdf_service import generate_pdf_from_text
 from app.services.feedback_service import generate_review_suggestions
 from app.services.llm_service import LlmError
+from app.services.pdf_service import PdfExtractionError, extract_text
 from app.utils.auth_dependency import get_current_user
 from app.utils.logging_utils import safe_log
 from app.utils.workspace_access import get_workspace_or_404, require_member, require_project_access
@@ -500,14 +502,18 @@ async def submit_draft_feedback(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Accepts reviewer feedback (pasted text OR a plain-text file — exactly one)
-    about an existing draft, and turns it into correction suggestions saved as
-    ReviewComments. Every suggestion must quote a real snippet of the submitted
-    feedback as justification; a suggestion whose quote doesn't literally appear
-    in the feedback is discarded rather than saved (reported via discarded_count),
-    same anti-hallucination principle used elsewhere in the app. Suggestions are
-    attributed to the user who submitted the feedback (no dedicated "AI" user
-    account exists in the schema)."""
+    """Accepts reviewer feedback (pasted text OR an uploaded file — exactly
+    one) about an existing draft, and turns it into correction suggestions
+    saved as ReviewComments. Every suggestion must quote a real snippet of
+    the submitted feedback as justification; a suggestion whose quote
+    doesn't literally appear in the feedback is discarded rather than saved
+    (reported via discarded_count), same anti-hallucination principle used
+    elsewhere in the app. Suggestions are attributed to the user who
+    submitted the feedback (no dedicated "AI" user account exists in the
+    schema). Uploaded files: plain UTF-8 .txt, or .pdf (text extracted via
+    the same pdf_service used for paper uploads, including its OCR
+    fallback for scanned pages) — Word/.docx is not supported (would need a
+    new dependency; not added without a specific need for it)."""
     get_workspace_or_404(workspace_id, db)
     membership = require_member(workspace_id, current_user.id, db)
     _get_project_or_404(workspace_id, project_id, db)
@@ -522,13 +528,29 @@ async def submit_draft_feedback(
 
     if feedback_file:
         raw_bytes = await feedback_file.read()
-        try:
-            feedback_text = raw_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            raise HTTPException(
-                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                detail="feedback_file must be a plain UTF-8 text file",
-            )
+        filename = (feedback_file.filename or "").lower()
+
+        if filename.endswith(".pdf"):
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp.write(raw_bytes)
+                tmp_path = tmp.name
+            try:
+                feedback_text, _ = extract_text(tmp_path)
+            except PdfExtractionError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail=f"Could not extract text from this PDF: {exc}",
+                )
+            finally:
+                os.remove(tmp_path)
+        else:
+            try:
+                feedback_text = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail="feedback_file must be a plain UTF-8 .txt file or a .pdf file",
+                )
 
     if not feedback_text.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Feedback text cannot be empty")

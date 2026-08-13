@@ -4,6 +4,14 @@ export function getPaper(paperId) {
   return apiClient.get(`/papers/${paperId}`).then((res) => res.data);
 }
 
+// Lightweight (id/title/filename/status only) — powers the app-wide
+// "notify me when a paper is ready" watcher, which polls this on an
+// interval no matter which screen is open. Scoped server-side to papers the
+// current user uploaded that are still PROCESSING.
+export function listMyProcessingPapers() {
+  return apiClient.get("/papers/mine/processing").then((res) => res.data);
+}
+
 export function listProjectPapers(workspaceId, projectId, { page = 1, limit = 20 } = {}) {
   return apiClient
     .get(`/workspaces/${workspaceId}/projects/${projectId}/papers`, { params: { page, limit } })

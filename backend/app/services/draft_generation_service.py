@@ -24,6 +24,37 @@ DOCUMENT_TYPE_STRUCTURES = {
     "OTHER": ["Introduction", "Body", "Conclusion"],
 }
 
+# Section names alone ("Proposed Approach" vs "Thematic Synthesis") aren't a
+# strong enough signal on their own for every document type to come out
+# genuinely distinct — this spells out the actual purpose/register difference
+# so the model doesn't default to literature-review-style synthesis under a
+# differently-named section header.
+DOCUMENT_TYPE_GUIDANCE = {
+    "LITERATURE_REVIEW": (
+        "This is a retrospective synthesis of existing work: compare, contrast, and critically "
+        "evaluate what the source papers found. Do not propose new research, new methods, or "
+        "future experiments — stay strictly within describing and analyzing what already exists."
+    ),
+    "RESEARCH_PROPOSAL": (
+        "This is a forward-looking proposal for NEW research the author intends to carry out — not "
+        "a summary of the source papers. The 'Related Work' section situates the gap; the "
+        "'Proposed Approach' section MUST describe original work that goes beyond the source papers "
+        "(new methods, experiments, or extensions), written with forward-looking language ('we will', "
+        "'this study proposes', 'we plan to'). It should build on a limitation or open question found "
+        "in the source papers rather than re-describing what those papers already did."
+    ),
+    "THESIS_CHAPTER": (
+        "This is one chapter within a larger academic thesis. After synthesizing the literature, the "
+        "Discussion section should critically analyze its implications for the thesis's own research "
+        "question, in a more exploratory and reflective register than a standalone literature review."
+    ),
+    "CONFERENCE_PAPER": (
+        "This is a short, focused paper for a conference audience. Be concise, and emphasize the "
+        "significance and novelty of the findings rather than exhaustively covering every detail."
+    ),
+    "OTHER": "Write a clear, well-structured academic document.",
+}
+
 DRAFT_SYSTEM_PROMPT = (
     "You are an academic writing assistant. Base your writing ONLY on the provided "
     "paper summaries. Never invent information not present in them. Every factual "
@@ -39,6 +70,7 @@ def _normalize_title(text: str) -> str:
 def _build_draft_prompt(document_type: str, papers: list[dict]) -> str:
     sections = DOCUMENT_TYPE_STRUCTURES.get(document_type, DOCUMENT_TYPE_STRUCTURES["OTHER"])
     label = DOCUMENT_TYPE_LABELS.get(document_type, "Document")
+    guidance = DOCUMENT_TYPE_GUIDANCE.get(document_type, DOCUMENT_TYPE_GUIDANCE["OTHER"])
 
     papers_text = "\n\n".join(
         f"=== Paper: {p['title']} ===\n"
@@ -52,9 +84,13 @@ def _build_draft_prompt(document_type: str, papers: list[dict]) -> str:
 
     return (
         f"Write a {label} structured into these sections, in this order: {', '.join(sections)}.\n"
+        f"{guidance}\n"
         "Use Markdown section headers (## Section Name) for each section.\n\n"
         "Base your writing ONLY on the paper summaries below. Never invent information "
         "not present in them.\n"
+        "Do not reference, cite, or describe any paper, author, or prior work other than the ones "
+        "listed below — if the source summaries don't cover something, do not fill the gap with "
+        "outside knowledge or invented citations (e.g. 'Smith et al., 2020').\n"
         "Every factual claim about a specific paper's contribution, method, results, or "
         "limitations MUST be immediately followed by a citation in the exact format "
         "(Paper: <exact paper title>), using the paper titles exactly as given below.\n\n"

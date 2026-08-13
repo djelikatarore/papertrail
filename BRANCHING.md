@@ -1,51 +1,35 @@
 # Branching Strategy
 
-This project uses **one branch per sprint**, with each branch containing the
-**cumulative** state of the backend at the end of that sprint (not an isolated
-feature diff). Sprint branches were created sequentially — each one branched
-from the tip of the previous sprint's branch — so the full history from
-`sprint-2-backend` through `sprint-8-backend` is strictly linear, with no
-divergent/parallel work to reconcile.
+This project now uses three long-lived branches. The earlier per-sprint branch
+history (`sprint-1-setup` through `sprint-8-backend`, plus the `develop`
+integration branch) has been retired — `develop` was renamed to `backend`,
+`sprint-9-frontend` was renamed to `frontend`, and every intermediate sprint
+branch was deleted once its content was folded into `backend`.
 
 ## Branches
 
 | Branch | Content |
 |---|---|
-| `sprint-1-setup` | Initial backend scaffolding, SRS, project setup |
-| `sprint-2-backend` | DB architecture, authentication (signup/login/JWT, forgot/reset password) |
-| `sprint-3-backend` | Workspace/project management, PDF upload + text extraction |
-| `sprint-4-backend` | OCR, LLM summary generation, keyword extraction, visual element description |
-| `sprint-5-backend` | Embeddings, FAISS similarity, citation graph, arXiv suggestions, paper type detection |
-| `sprint-6-backend` | Reserved for Grounded Q&A — in practice this work landed directly on `sprint-7-backend` (see below), so this branch is identical to `sprint-5-backend` |
-| `sprint-7-backend` | Q&A + chat history, draft CRUD/generation/PDF export, feedback review, credits system removal, project access restriction, multi-source paper suggestions (arXiv/CORE/PubMed) |
-| `sprint-8-backend` | Search + filters, pagination, profile/download endpoints, error-handling audit, async LLM migration, background upload processing, AI call parallelization |
-| `develop` | **Integration branch** — the full, current, functionally-complete backend. Created by merging `sprint-2-backend` → `sprint-3-backend` → ... → `sprint-8-backend` in order. |
-| `main` | Reserved for stable/release milestones (e.g. once the frontend is integrated) — kept untouched at the initial commit until then |
+| `main` | Reserved for stable/release milestones. Kept blank (initial commit only) — nothing has been merged into it yet. |
+| `backend` | Backend-only mirror: just the `backend/` directory, kept in sync with its current state on `frontend`. Not developed on directly — every change originates on `frontend` and is copied over (see "Keeping `backend` in sync" below). |
+| `frontend` | The full, current project — backend and frontend together. This is the active development branch; almost all work happens here. |
 
-## Merge strategy
+## Keeping `backend` in sync
 
-Because every sprint branch is a direct ancestor of the next, integrating them
-into `develop` is a **sequential fast-forward merge** — no merge commits, no
-conflicts:
+`backend` exists as a standalone snapshot of just the Python backend, useful
+for anyone who only needs that half of the project. Since all real
+development happens on `frontend`, `backend` is brought up to date by
+replacing its `backend/` directory wholesale with `frontend`'s current
+`backend/` directory — not by cherry-picking or merging individual commits:
 
 ```
-git checkout sprint-2-backend
-git checkout -b develop
-git merge --ff-only sprint-3-backend
-git merge --ff-only sprint-4-backend
-git merge --ff-only sprint-5-backend
-git merge --ff-only sprint-6-backend   # no-op, identical to sprint-5-backend
-git merge --ff-only sprint-7-backend
-git merge --ff-only sprint-8-backend
+git checkout backend
+git rm -r --quiet backend/
+git checkout frontend -- backend/
+git diff --quiet frontend -- backend/   # verify: no output means identical
+git commit -m "sync: replace backend/ with its current state from the frontend branch"
+git checkout frontend
 ```
 
-After this, `develop` points at the exact same commit as `sprint-8-backend` —
-verified with `git diff sprint-8-backend develop` (empty).
-
-## Why keep every sprint branch around
-
-The individual `sprint-X-backend` branches are **not deleted** after merging.
-They're kept as a durable record of the project's incremental development —
-each one is a checkpoint of exactly what existed at the end of that sprint,
-useful for tracking progress over time (e.g. for the internship report) even
-though `develop` now supersedes all of them functionally.
+This is a manual, on-demand sync (typically done after a batch of backend
+changes lands on `frontend`), not an automated or scheduled one.

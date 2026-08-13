@@ -11,8 +11,8 @@ const STATUS_OPTIONS = [
 // working exactly like an active one (upload, Q&A, everything). The only
 // difference is visual: muted card + grey badge, so it still reads clearly
 // in the same grid without needing a separate "Archived" section/filter.
-export default function ProjectCard({ project, onClick, onStatusChange }) {
-  const color = getProjectColor(project.id);
+export default function ProjectCard({ project, index = 0, onClick, onStatusChange }) {
+  const color = getProjectColor(index);
   const isArchived = project.status === "ARCHIVED";
   const [menuOpen, setMenuOpen] = useState(false);
   const [changing, setChanging] = useState(false);

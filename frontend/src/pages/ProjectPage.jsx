@@ -1,7 +1,8 @@
-import { FileText, MessageSquare, Network, Pencil, PenTool, Search, Sparkles, Trash2, Upload } from "lucide-react";
+import { ChevronUp, FileText, MessageSquare, Network, Pencil, PenTool, Search, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
+import CitationGraphBarChart from "../components/CitationGraphBarChart";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import ErrorBanner from "../components/ErrorBanner";
 import ManageAccessPanel from "../components/ManageAccessPanel";
@@ -10,7 +11,7 @@ import PaginationControls from "../components/PaginationControls";
 import PaperCard from "../components/PaperCard";
 import UploadModal from "../components/UploadModal";
 import { deletePaper, listProjectPapers } from "../services/paperService";
-import { deleteProject, getProject, updateProject } from "../services/projectService";
+import { deleteProject, getCitationGraph, getProject, updateProject } from "../services/projectService";
 import { listWorkspaces } from "../services/workspaceService";
 
 const FILTERS = [
@@ -50,6 +51,10 @@ export default function ProjectPage() {
   const [paperToDelete, setPaperToDelete] = useState(null);
   const [deletingPaper, setDeletingPaper] = useState(false);
   const [deletePaperError, setDeletePaperError] = useState(null);
+  const [showCitationGraph, setShowCitationGraph] = useState(false);
+  const [citationGraphNodes, setCitationGraphNodes] = useState([]);
+  const [citationGraphLoading, setCitationGraphLoading] = useState(false);
+  const [citationGraphError, setCitationGraphError] = useState(null);
   const pollRef = useRef(null);
 
   async function handleDeleteProject() {
@@ -109,6 +114,15 @@ export default function ProjectPage() {
   }
 
   useEffect(() => {
+    // Navigating from one project straight to another reuses this component
+    // (route params change, no remount) — without resetting here, a cached
+    // graph from the PREVIOUS project could flash before the new one loads.
+    setShowCitationGraph(false);
+    setCitationGraphNodes([]);
+    setCitationGraphError(null);
+  }, [workspaceId, projectId]);
+
+  useEffect(() => {
     getProject(workspaceId, projectId).then(setProject).catch(() => {});
     setOwnerCheckFailed(false);
     listWorkspaces()
@@ -141,6 +155,27 @@ export default function ProjectPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  // Loaded lazily on first open rather than alongside the paper list — most
+  // visits to this page never open the graph, so fetching it eagerly would
+  // waste a request. Re-opening after the first time reuses what's already
+  // loaded instead of re-fetching.
+  function toggleCitationGraph() {
+    if (showCitationGraph) {
+      setShowCitationGraph(false);
+      return;
+    }
+    setShowCitationGraph(true);
+    if (citationGraphNodes.length > 0 || citationGraphLoading) return;
+    setCitationGraphLoading(true);
+    setCitationGraphError(null);
+    getCitationGraph(workspaceId, projectId)
+      .then((graph) => {
+        setCitationGraphNodes(graph.nodes.map((n) => ({ id: n.paper_id, title: n.title, citationCount: n.citation_count })));
+      })
+      .catch(() => setCitationGraphError("Could not load the citation graph. Please try again."))
+      .finally(() => setCitationGraphLoading(false));
+  }
+
   function load(targetPage) {
     setLoading(true);
     setError(null);
@@ -157,6 +192,9 @@ export default function ProjectPage() {
   // While any paper on the current page is still being processed in the
   // background, poll for updates (status, figure-description progress) every
   // few seconds instead of leaving the badge stale until a manual refresh.
+  // The Processing -> Ready/Error transition itself is announced by the
+  // app-wide NotificationProvider (see context/NotificationContext.jsx),
+  // not here — this poll only keeps this page's own list current.
   function maybePoll(currentItems, targetPage) {
     clearInterval(pollRef.current);
     const stillProcessing = currentItems.some((p) => p.status === "PROCESSING");
@@ -222,10 +260,10 @@ export default function ProjectPage() {
             </button>
             <button
               type="button"
-              onClick={() => navigate(`/workspaces/${workspaceId}/projects/${projectId}/citation-graph`)}
+              onClick={toggleCitationGraph}
               className="btn-secondary shrink-0 whitespace-nowrap px-4 py-2"
             >
-              <Network size={15} /> Citation Graph
+              {showCitationGraph ? <ChevronUp size={15} /> : <Network size={15} />} Citation Graph
             </button>
             {isOwner && (
               <button
@@ -255,6 +293,52 @@ export default function ProjectPage() {
             )}
           </div>
         </div>
+
+        {project && (
+          <p className="mb-4 text-xs text-muted">
+            {project.created_at ? `Created ${new Date(project.created_at).toLocaleDateString()}` : ""}
+            {project.created_at && project.member_count != null ? " · " : ""}
+            {project.member_count != null
+              ? `${project.member_count} member${project.member_count === 1 ? "" : "s"}`
+              : ""}
+          </p>
+        )}
+
+        {showCitationGraph && (
+          <div className="mb-6 rounded-[var(--radius-card-lg)] border border-border bg-card p-6 shadow-card">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-text">Citation Graph — {project?.title}</p>
+                <p className="text-xs text-muted">How many times each paper has been cited by other researchers</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCitationGraph(false)}
+                aria-label="Close citation graph"
+                className="rounded-lg p-1.5 text-muted transition-colors hover:bg-app-bg hover:text-text"
+              >
+                <ChevronUp size={16} />
+              </button>
+            </div>
+            {citationGraphError && <ErrorBanner message={citationGraphError} />}
+            {citationGraphLoading ? (
+              <p className="text-sm text-muted">Loading...</p>
+            ) : (
+              !citationGraphError && (
+                <div className="mx-auto max-w-[640px]">
+                  <CitationGraphBarChart
+                    nodes={citationGraphNodes}
+                    width={640}
+                    height={260}
+                    onNodeClick={(paperId) =>
+                      navigate(`/workspaces/${workspaceId}/projects/${projectId}/papers/${paperId}`)
+                    }
+                  />
+                </div>
+              )
+            )}
+          </div>
+        )}
 
         <div className="mb-6 flex flex-wrap gap-2">
           {FILTERS.map((f) => (

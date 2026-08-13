@@ -58,6 +58,11 @@ class ProjectResponse(BaseModel):
     description: str | None
     status: str
     created_at: str | None
+    # Only populated on the single-project detail endpoint (see get_project) —
+    # projects have no members of their own, this is the workspace's member
+    # count minus anyone specifically denied access to this project. None on
+    # list/paginated responses, which don't pay for the extra query per item.
+    member_count: int | None = None
 
     class Config:
         from_attributes = True
@@ -260,6 +265,13 @@ def get_project(
     membership = require_member(workspace_id, current_user.id, db)
     project = _get_project_or_404(workspace_id, project_id, db)
     require_project_access(project_id, membership, db)
+
+    restricted_member_ids = {
+        r.workspace_member_id
+        for r in db.query(ProjectAccessRestriction).filter(ProjectAccessRestriction.project_id == project_id).all()
+    }
+    total_members = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == workspace_id).all()
+    project.member_count = sum(1 for m in total_members if m.id not in restricted_member_ids)
 
     return project
 

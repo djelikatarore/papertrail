@@ -20,6 +20,15 @@ const PALETTE = [
   { name: "pink", hex: "#EC4899" },
 ];
 
-export function getProjectColor(projectId) {
-  return PALETTE[projectId % PALETTE.length];
+// Takes the item's POSITION in the currently-rendered list, not its raw
+// database id. Real ids are sparse (workspace/project ids in this app can
+// easily be e.g. 84, 96, ...) so id % PALETTE.length collided far too often
+// in practice — two cards sitting right next to each other would land on
+// the exact same color whenever their ids happened to differ by a multiple
+// of PALETTE.length. Position-based assignment guarantees every card
+// visible together in the same grid/list gets a distinct color (as long as
+// there are 12 or fewer of them on screen at once, true for every grid/list
+// in this app today).
+export function getProjectColor(index) {
+  return PALETTE[index % PALETTE.length];
 }

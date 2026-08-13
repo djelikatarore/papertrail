@@ -86,11 +86,10 @@ class WorkspaceMemberResponse(BaseModel):
 
 
 class InviteResponse(BaseModel):
-    """"added" when the email matched an existing account (same as the old
-    behavior — WorkspaceMemberResponse fields are populated); "invited" when
-    it didn't and a real invitation email was sent instead (member_id/role
-    stay None — there's no membership yet, only once they sign up with this
-    exact token, see auth_router.signup)."""
+    """Always "invited" now — a real invitation email is always sent, and
+    there's never an immediate membership, whether or not the email matches
+    an existing account (see invite_user_by_email). member_id/role are kept
+    on the response shape but stay unpopulated."""
 
     status: str
     email: str
@@ -101,6 +100,12 @@ class InviteResponse(BaseModel):
 class InvitationPreviewResponse(BaseModel):
     workspace_name: str
     email: str
+    account_exists: bool
+
+
+class AcceptInvitationResponse(BaseModel):
+    workspace_id: int
+    workspace_name: str
 
 
 class PaperSearchResultResponse(BaseModel):
@@ -131,6 +136,22 @@ class SearchResponse(BaseModel):
     projects: list[ProjectSearchResultResponse]
 
 
+def _ensure_workspace_name_available(db: Session, owner_id: int, name: str, exclude_workspace_id: int | None = None):
+    # Unique per owner, not globally — two different users are free to both
+    # name a workspace "Research", but the same owner can't have two.
+    query = db.query(Workspace).filter(
+        Workspace.owner_id == owner_id,
+        func.lower(Workspace.name) == name.lower(),
+    )
+    if exclude_workspace_id is not None:
+        query = query.filter(Workspace.id != exclude_workspace_id)
+    if query.first() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have a workspace with this name",
+        )
+
+
 @router.post("", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)
 def create_workspace(
     payload: CreateWorkspaceRequest,
@@ -139,6 +160,8 @@ def create_workspace(
 ):
     if not payload.name.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace name cannot be empty")
+
+    _ensure_workspace_name_available(db, current_user.id, payload.name.strip())
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -210,6 +233,7 @@ def update_workspace(
     if payload.name is not None:
         if not payload.name.strip():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace name cannot be empty")
+        _ensure_workspace_name_available(db, workspace.owner_id, payload.name.strip(), exclude_workspace_id=workspace.id)
         workspace.name = payload.name.strip()
     if payload.description is not None:
         workspace.description = payload.description
@@ -330,10 +354,12 @@ def invite_user_by_email(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """If the email matches an existing PaperTrail account, adds them
-    directly (unchanged from before). Otherwise, sends a real invitation
-    email with a signup link carrying a dedicated, per-email token — see
-    WorkspaceInvitation and auth_router.signup, which consumes it."""
+    """Always sends a real invitation email with a token — never adds an
+    existing account directly/silently. What happens after the link is
+    clicked depends on whether the email matches an account (see
+    get_invitation_preview's account_exists and POST .../accept): a new
+    account auto-joins on signup (unchanged, see auth_router.signup), an
+    existing account only joins after an explicit Accept."""
     workspace = get_workspace_or_404(workspace_id, db)
 
     if workspace.owner_id != current_user.id:
@@ -358,32 +384,9 @@ def invite_user_by_email(
                 status_code=status.HTTP_409_CONFLICT, detail="User is already a member of this workspace"
             )
 
-        membership = WorkspaceMember(
-            workspace_id=workspace.id,
-            user_id=invited_user.id,
-            role="MEMBER",
-            joined_at=datetime.now(timezone.utc).isoformat(),
-        )
-        db.add(membership)
-        try:
-            db.commit()
-        except IntegrityError:
-            # The pre-check above isn't atomic — two concurrent invites for the
-            # same email can both pass it before either commits. The DB-level
-            # unique constraint (workspace_id, user_id) is the real guard; this
-            # just turns its violation into the same clean 409 instead of a raw 500.
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="User is already a member of this workspace"
-            )
-        db.refresh(membership)
-
-        return InviteResponse(status="added", email=payload.email, member_id=membership.id, role=membership.role)
-
-    # No account with this email — reuse a still-pending invitation's token
-    # if this exact email was already invited to this exact workspace
-    # (re-inviting becomes "resend" rather than minting a second, orphaned
-    # token), otherwise create a new one.
+    # Reuse a still-pending invitation's token if this exact email was
+    # already invited to this exact workspace (re-inviting becomes "resend"
+    # rather than minting a second, orphaned token), otherwise create a new one.
     invitation = (
         db.query(WorkspaceInvitation)
         .filter(WorkspaceInvitation.workspace_id == workspace.id, WorkspaceInvitation.email == payload.email)
@@ -426,7 +429,66 @@ def get_invitation_preview(token: str, db: Session = Depends(get_db)):
     if not workspace:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid invitation")
 
-    return InvitationPreviewResponse(workspace_name=workspace.name, email=invitation.email)
+    account_exists = db.query(User).filter(User.email == invitation.email).first() is not None
+
+    return InvitationPreviewResponse(
+        workspace_name=workspace.name, email=invitation.email, account_exists=account_exists
+    )
+
+
+@router.post("/invitations/{token}/accept", response_model=AcceptInvitationResponse)
+def accept_invitation(
+    token: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """For an EXISTING account only — a new account auto-joins at signup
+    instead (see auth_router.signup) and never reaches this endpoint.
+    Requires the logged-in user's email to match the invitation's, so
+    someone logged in as the wrong account can't accept someone else's
+    invitation — the invitation itself is left untouched in that case,
+    still valid for whoever it was actually sent to."""
+    invitation = db.query(WorkspaceInvitation).filter(WorkspaceInvitation.token == token).first()
+    if not invitation or invitation.accepted_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or already-used invitation"
+        )
+
+    if invitation.email.lower() != current_user.email.lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This invitation was sent to a different email address.",
+        )
+
+    existing_membership = (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.workspace_id == invitation.workspace_id,
+            WorkspaceMember.user_id == current_user.id,
+        )
+        .first()
+    )
+    if existing_membership:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="You are already a member of this workspace"
+        )
+
+    workspace = db.query(Workspace).filter(Workspace.id == invitation.workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid invitation")
+
+    db.add(
+        WorkspaceMember(
+            workspace_id=invitation.workspace_id,
+            user_id=current_user.id,
+            role="MEMBER",
+            joined_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    invitation.accepted_at = datetime.now(timezone.utc).isoformat()
+    db.commit()
+
+    return AcceptInvitationResponse(workspace_id=workspace.id, workspace_name=workspace.name)
 
 
 @router.get("/{workspace_id}/invite-link", response_model=InviteLinkResponse)

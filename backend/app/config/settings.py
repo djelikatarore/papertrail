@@ -26,6 +26,7 @@ if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "30"))
+VERIFICATION_TOKEN_EXPIRE_MINUTES = int(os.getenv("VERIFICATION_TOKEN_EXPIRE_MINUTES", "120"))
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024
@@ -58,6 +59,11 @@ if not CORE_API_KEY:
 # by paper_router.py's fallback to CrossRef), so the app degrades gracefully
 # rather than failing to start.
 SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+
+# Optional — "Sign in with Google" is additive on top of the existing
+# email/password system, not required for the app to run. When unset,
+# POST /auth/google rejects with a clear 500 instead of failing startup.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 VISUAL_ELEMENTS_DIR = os.getenv("VISUAL_ELEMENTS_DIR", "visual_elements")
 DRAFT_PDF_DIR = os.getenv("DRAFT_PDF_DIR", "draft_pdfs")

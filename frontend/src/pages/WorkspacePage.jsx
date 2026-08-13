@@ -222,11 +222,12 @@ export default function WorkspacePage() {
         ) : (
           <>
             {!loading && (
-              <div className="grid grid-cols-3 gap-4">
-                {items.map((project) => (
+              <div className="grid grid-cols-3 items-start gap-4">
+                {items.map((project, index) => (
                   <ProjectCard
                     key={project.id}
                     project={project}
+                    index={index}
                     onClick={() => navigate(`/workspaces/${workspaceId}/projects/${project.id}`)}
                     onStatusChange={handleStatusChange}
                   />

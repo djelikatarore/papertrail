@@ -110,6 +110,7 @@ class VisualElementResponse(BaseModel):
     page_number: int | None
     image_path: str | None
     ai_description: str | None
+    figure_reference: str | None
 
     class Config:
         from_attributes = True
@@ -418,7 +419,7 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
         os.makedirs(VISUAL_ELEMENTS_DIR, exist_ok=True)
         visual_elements = []
         extracted_images = filter_duplicate_images(extract_visual_elements(file_path))
-        for index, (page_number, image_bytes, ext) in enumerate(extracted_images):
+        for index, (page_number, image_bytes, ext, figure_reference) in enumerate(extracted_images):
             image_filename = f"{paper.id}_{page_number}_{index}.{ext}"
             image_disk_path = os.path.join(VISUAL_ELEMENTS_DIR, image_filename)
             with open(image_disk_path, "wb") as f:
@@ -430,6 +431,7 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
                     element_type="image",
                     image_path=image_disk_path,
                     page_number=page_number,
+                    figure_reference=figure_reference,
                 )
             )
 
@@ -497,6 +499,32 @@ async def _process_paper_background(paper_id: int, file_path: str, project_id: i
             safe_log(f"[paper_router] Failed to mark paper {paper_id} as ERROR after crash: {inner_exc}")
     finally:
         db.close()
+
+
+class ProcessingPaperResponse(BaseModel):
+    id: int
+    title: str | None
+    filename: str
+    status: str
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/mine/processing", response_model=list[ProcessingPaperResponse])
+def list_my_processing_papers(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Lightweight, deliberately minimal endpoint for the app-wide "notify me
+    when a paper is ready" watcher (see NotificationContext on the frontend)
+    — it polls this on an interval regardless of which screen is open, so it
+    only returns the few fields needed to build a notification, not a full
+    paper list. Scoped to papers the current user uploaded (not everything
+    in every workspace they belong to), matching what they'd actually expect
+    to be notified about."""
+    return (
+        db.query(Paper)
+        .filter(Paper.uploaded_by == current_user.id, Paper.status == "PROCESSING")
+        .all()
+    )
 
 
 def _get_paper_with_access(paper_id: int, db: Session, current_user: User) -> Paper:

@@ -36,6 +36,33 @@ with engine.connect() as conn:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_workspace_member_workspace_user "
         "ON workspace_members (workspace_id, user_id)"
     ))
+    conn.execute(text(
+        "ALTER TABLE visual_elements ADD COLUMN IF NOT EXISTS figure_reference VARCHAR"
+    ))
+    conn.execute(text(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR UNIQUE"
+    ))
+    conn.execute(text(
+        "ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL"
+    ))
+    # DEFAULT TRUE here is deliberate and only matters for this one-time
+    # backfill: every account that already exists the moment this column is
+    # added gets that default applied immediately, so nobody who signed up
+    # before email verification existed gets retroactively locked out.
+    # New signups after this point never rely on the column default — the
+    # application code in auth_router.py always sets email_verified
+    # explicitly (False for a fresh password signup, True for Google).
+    # IF NOT EXISTS makes the whole statement a no-op on every later
+    # restart, so this backfill runs exactly once.
+    conn.execute(text(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE"
+    ))
+    conn.execute(text(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token VARCHAR UNIQUE"
+    ))
+    conn.execute(text(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires_at VARCHAR"
+    ))
     conn.commit()
 
 app = FastAPI(

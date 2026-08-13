@@ -36,6 +36,7 @@ export default function DraftReviewPage() {
   const [feedbackMode, setFeedbackMode] = useState("text");
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackFile, setFeedbackFile] = useState(null);
+  const [feedbackFileError, setFeedbackFileError] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [discardedCount, setDiscardedCount] = useState(0);
   const [error, setError] = useState(null);
@@ -184,6 +185,43 @@ export default function DraftReviewPage() {
     } finally {
       setSavingContent(false);
     }
+  }
+
+  // Validated the moment a file is picked, not left until the upload fails
+  // server-side — mirrors UploadModal's PDF check (extension + magic bytes
+  // for a PDF, since a mislabeled/corrupt file would otherwise only surface
+  // as a vague error after submitting).
+  function validateAndSetFeedbackFile(selected) {
+    setFeedbackFile(null);
+    setFeedbackFileError(null);
+    if (!selected) return;
+
+    const name = selected.name.toLowerCase();
+    const isTxt = selected.type === "text/plain" || name.endsWith(".txt");
+    const isPdf = selected.type === "application/pdf" || name.endsWith(".pdf");
+
+    if (!isTxt && !isPdf) {
+      setFeedbackFileError("Please select a .txt or .pdf file.");
+      return;
+    }
+
+    if (isPdf) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const bytes = new Uint8Array(reader.result);
+        const header = String.fromCharCode(...bytes);
+        if (header !== "%PDF-") {
+          setFeedbackFileError("This file doesn't look like a valid PDF.");
+          return;
+        }
+        setFeedbackFile(selected);
+      };
+      reader.onerror = () => setFeedbackFileError("Could not read this file. Please try again.");
+      reader.readAsArrayBuffer(selected.slice(0, 5));
+      return;
+    }
+
+    setFeedbackFile(selected);
   }
 
   const canAnalyze =
@@ -482,14 +520,15 @@ export default function DraftReviewPage() {
               <div className="px-5 py-4">
                 <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border py-6 text-sm text-muted">
                   <Upload size={16} />
-                  {feedbackFile ? feedbackFile.name : "Choose a text file"}
+                  {feedbackFile ? feedbackFile.name : "Choose a .txt or .pdf file"}
                   <input
                     type="file"
-                    accept=".txt,text/plain"
+                    accept=".txt,text/plain,.pdf,application/pdf"
                     className="hidden"
-                    onChange={(e) => setFeedbackFile(e.target.files?.[0] ?? null)}
+                    onChange={(e) => validateAndSetFeedbackFile(e.target.files?.[0] ?? null)}
                   />
                 </label>
+                {feedbackFileError && <p className="mt-2 text-xs text-red">{feedbackFileError}</p>}
               </div>
             )}
           </div>

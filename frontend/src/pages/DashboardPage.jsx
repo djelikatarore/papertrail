@@ -55,8 +55,8 @@ export default function DashboardPage() {
       setNewWorkspaceName("");
       setShowCreateWorkspace(false);
       load();
-    } catch {
-      setError("Could not create workspace. Please try again.");
+    } catch (err) {
+      setError(err.response?.data?.detail ?? "Could not create workspace. Please try again.");
     } finally {
       setCreatingWorkspace(false);
     }
@@ -158,11 +158,12 @@ export default function DashboardPage() {
             <span className="text-sm font-semibold">Create your first project</span>
           </button>
         ) : (
-          <div className="grid grid-cols-3 gap-4">
-            {recentProjects.map((project) => (
+          <div className="grid grid-cols-3 items-start gap-4">
+            {recentProjects.map((project, index) => (
               <ProjectCard
                 key={project.id}
                 project={project}
+                index={index}
                 onClick={() => navigate(`/workspaces/${workspace.id}/projects/${project.id}`)}
               />
             ))}

@@ -12,20 +12,52 @@ const REVIEW_TYPES = [
   { value: "RAPID", label: "Rapid" },
 ];
 
+const PDF_SIGNATURE = "%PDF-";
+
 export default function UploadModal({ workspaceId, projectId, onClose, onUploaded }) {
   const [step, setStep] = useState("file");
   const [file, setFile] = useState(null);
+  const [fileError, setFileError] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [reviewType, setReviewType] = useState("SYSTEMATIC");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
 
+  // Validated the moment a file is picked/dropped, not left until the final
+  // "Upload" click — a wrong extension or a corrupted/mislabeled PDF (checked
+  // via its actual %PDF- header, not just the filename) is caught here
+  // instead of only surfacing as a vague backend error after the user has
+  // already stepped past this screen.
+  function validateAndSetFile(selected) {
+    setFile(null);
+    setFileError(null);
+    if (!selected) return;
+
+    const looksLikePdf = selected.type === "application/pdf" || selected.name.toLowerCase().endsWith(".pdf");
+    if (!looksLikePdf) {
+      setFileError("Please select a PDF file.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const bytes = new Uint8Array(reader.result);
+      const header = String.fromCharCode(...bytes);
+      if (header !== PDF_SIGNATURE) {
+        setFileError("This file doesn't look like a valid PDF.");
+        return;
+      }
+      setFile(selected);
+    };
+    reader.onerror = () => setFileError("Could not read this file. Please try again.");
+    reader.readAsArrayBuffer(selected.slice(0, PDF_SIGNATURE.length));
+  }
+
   function handleDrop(event) {
     event.preventDefault();
     setDragging(false);
-    const dropped = event.dataTransfer.files[0];
-    if (dropped) setFile(dropped);
+    validateAndSetFile(event.dataTransfer.files[0]);
   }
 
   async function handleUpload() {
@@ -83,12 +115,17 @@ export default function UploadModal({ workspaceId, projectId, onClose, onUploade
               type="file"
               accept=".pdf"
               className="hidden"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => validateAndSetFile(e.target.files?.[0] ?? null)}
             />
           </div>
           {file && (
             <div className="mt-3 flex items-center gap-2 rounded-xl bg-green-light px-3.5 py-2.5 text-sm font-medium text-green">
               <CheckCircle size={14} /> {file.name}
+            </div>
+          )}
+          {fileError && (
+            <div className="mt-3">
+              <ErrorBanner message={fileError} />
             </div>
           )}
           <div className="mt-5 flex gap-2.5">

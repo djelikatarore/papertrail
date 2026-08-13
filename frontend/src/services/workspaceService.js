@@ -48,6 +48,10 @@ export function getInvitationPreview(token) {
   return apiClient.get(`/workspaces/invitations/${token}`).then((res) => res.data);
 }
 
+export function acceptInvitation(token) {
+  return apiClient.post(`/workspaces/invitations/${token}/accept`).then((res) => res.data);
+}
+
 export function joinWorkspace(token) {
   return apiClient.post(`/workspaces/join/${token}`).then((res) => res.data);
 }

@@ -82,9 +82,9 @@ export function AuthProvider({ children }) {
     });
   }, []);
 
-  function login(newToken, newUser) {
+  function login(newToken, newUser, remember = true) {
     loggingOutRef.current = false;
-    setStoredToken(newToken);
+    setStoredToken(newToken, remember);
     setToken(newToken);
     setUser(newUser);
   }
