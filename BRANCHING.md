@@ -1,35 +1,50 @@
 # Branching Strategy
 
-This project now uses three long-lived branches. The earlier per-sprint branch
-history (`sprint-1-setup` through `sprint-8-backend`, plus the `develop`
-integration branch) has been retired — `develop` was renamed to `backend`,
-`sprint-9-frontend` was renamed to `frontend`, and every intermediate sprint
-branch was deleted once its content was folded into `backend`.
+This project uses three long-lived branches. `main` is the full project and
+the active development branch — almost all work happens here. `backend` and
+`frontend` are read-only mirrors of just their respective directory, kept in
+sync with `main` on demand; neither is developed on directly.
+
+(Earlier history: the project used per-sprint branches plus a `develop`
+integration branch, later consolidated into `develop`→`backend` and
+`sprint-9-frontend`→`frontend`, with `frontend` as the active branch and
+`main` left blank. `main` has since absorbed `frontend`'s full history and
+become the active branch instead; `frontend` was recreated as a
+frontend-only mirror, mirroring how `backend` already worked.)
 
 ## Branches
 
 | Branch | Content |
 |---|---|
-| `main` | Reserved for stable/release milestones. Kept blank (initial commit only) — nothing has been merged into it yet. |
-| `backend` | Backend-only mirror: just the `backend/` directory, kept in sync with its current state on `frontend`. Not developed on directly — every change originates on `frontend` and is copied over (see "Keeping `backend` in sync" below). |
-| `frontend` | The full, current project — backend and frontend together. This is the active development branch; almost all work happens here. |
+| `main` | The full, current project — backend and frontend together. This is the active development branch; almost all work happens here. |
+| `backend` | Backend-only mirror: just the `backend/` directory, kept in sync with its current state on `main`. Not developed on directly — every change originates on `main` and is copied over (see below). |
+| `frontend` | Frontend-only mirror: just the `frontend/` directory, kept in sync with its current state on `main`. Not developed on directly — every change originates on `main` and is copied over (see below). |
 
-## Keeping `backend` in sync
+## Keeping `backend`/`frontend` in sync
 
-`backend` exists as a standalone snapshot of just the Python backend, useful
-for anyone who only needs that half of the project. Since all real
-development happens on `frontend`, `backend` is brought up to date by
-replacing its `backend/` directory wholesale with `frontend`'s current
-`backend/` directory — not by cherry-picking or merging individual commits:
+Both mirror branches exist as standalone snapshots of just one half of the
+project, useful for anyone who only needs that half. Since all real
+development happens on `main`, each is brought up to date by replacing its
+directory wholesale with `main`'s current version of that directory — not by
+cherry-picking or merging individual commits:
 
 ```
+# backend
 git checkout backend
 git rm -r --quiet backend/
-git checkout frontend -- backend/
-git diff --quiet frontend -- backend/   # verify: no output means identical
-git commit -m "sync: replace backend/ with its current state from the frontend branch"
+git checkout main -- backend/
+git diff --quiet main -- backend/   # verify: no output means identical
+git commit -m "sync: replace backend/ with its current state from the main branch"
+git checkout main
+
+# frontend
 git checkout frontend
+git rm -r --quiet frontend/
+git checkout main -- frontend/
+git diff --quiet main -- frontend/   # verify: no output means identical
+git commit -m "sync: replace frontend/ with its current state from the main branch"
+git checkout main
 ```
 
-This is a manual, on-demand sync (typically done after a batch of backend
-changes lands on `frontend`), not an automated or scheduled one.
+This is a manual, on-demand sync (typically done after a batch of changes
+lands on `main`), not an automated or scheduled one.
